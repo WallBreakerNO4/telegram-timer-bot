@@ -27,6 +27,25 @@ function parseCommandExpression(text: string | undefined): string {
   return tokens.slice(1).join(' ').trim();
 }
 
+function getTelegramMessageText(message: unknown): string {
+  if (!message || typeof message !== 'object') {
+    return '';
+  }
+
+  const record = message as Record<string, unknown>;
+  const text = record.text;
+  if (typeof text === 'string') {
+    return text;
+  }
+
+  const caption = record.caption;
+  if (typeof caption === 'string') {
+    return caption;
+  }
+
+  return '';
+}
+
 export function registerTzmHandler(bot: TelegramBot, env: Env): void {
   bot.on('tzm', async (ctx: TelegramExecutionContext) => {
     const message = ctx.update.message;
@@ -39,21 +58,24 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
     const chatType = message.chat.type;
     const isGroupChat = chatType === 'group' || chatType === 'supergroup';
     const isPrivateChat = chatType === 'private';
+    const replyToMessageId = message.reply_to_message?.message_id ?? message.message_id;
     if (!isGroupChat && !isPrivateChat) {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
-        reply_to_message_id: message.message_id,
+        reply_to_message_id: replyToMessageId,
         text: '仅群聊或私聊可用',
         parse_mode: '',
       });
       return new Response('ok');
     }
 
-    const expression = parseCommandExpression(message.text);
+    const commandExpression = parseCommandExpression(message.text);
+    const repliedExpression = getTelegramMessageText(message.reply_to_message).trim();
+    const expression = commandExpression || repliedExpression;
     if (!expression) {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
-        reply_to_message_id: message.message_id,
+        reply_to_message_id: replyToMessageId,
         text: '用法：/tzm 明天下午五点',
         parse_mode: '',
       });
@@ -63,7 +85,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
     if (isPeriodicExpression(expression)) {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
-        reply_to_message_id: message.message_id,
+        reply_to_message_id: replyToMessageId,
         text: '仅支持单次时间点',
         parse_mode: '',
       });
@@ -81,7 +103,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
     if (!requesterTimezone) {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
-        reply_to_message_id: message.message_id,
+        reply_to_message_id: replyToMessageId,
         text: '请私聊 bot 用 /start 初始化',
         parse_mode: '',
       });
@@ -93,6 +115,18 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
       const replyTarget = getUserProfileFromMessageUser(message.reply_to_message?.from);
       if (replyTarget) {
         await markSeen(env, chatId, replyTarget);
+      }
+    }
+
+    const shouldParseRepliedMessage = !commandExpression && Boolean(repliedExpression);
+    let parserTimezone = requesterTimezone;
+    if (shouldParseRepliedMessage) {
+      const replyTarget = getUserProfileFromMessageUser(message.reply_to_message?.from);
+      if (replyTarget) {
+        const replyTargetTimezone = await getUserTimezone(env, replyTarget.userId);
+        if (replyTargetTimezone) {
+          parserTimezone = replyTargetTimezone;
+        }
       }
     }
 
@@ -115,7 +149,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
     if (!ai) {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
-        reply_to_message_id: message.message_id,
+        reply_to_message_id: replyToMessageId,
         text: parseFailureText,
         parse_mode: '',
       });
@@ -135,7 +169,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
               role: 'user',
               content: JSON.stringify({
                 expression,
-                requesterTimezone,
+                requesterTimezone: parserTimezone,
                 currentTime: nowIso,
               }),
             },
@@ -152,7 +186,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
       if (!parsedResult.ok) {
         await api.sendMessage(ctx.bot.api.toString(), {
           chat_id: chatId,
-          reply_to_message_id: message.message_id,
+          reply_to_message_id: replyToMessageId,
           text: parseFailureText,
           parse_mode: '',
         });
@@ -163,7 +197,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
     } catch {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
-        reply_to_message_id: message.message_id,
+        reply_to_message_id: replyToMessageId,
         text: parseFailureText,
         parse_mode: '',
       });
@@ -173,7 +207,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
     if (!parsed.ok) {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
-        reply_to_message_id: message.message_id,
+        reply_to_message_id: replyToMessageId,
         text: parseFailureText,
         parse_mode: '',
       });
@@ -184,7 +218,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
     if (Number.isNaN(targetDate.getTime())) {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
-        reply_to_message_id: message.message_id,
+        reply_to_message_id: replyToMessageId,
         text: parseFailureText,
         parse_mode: '',
       });
@@ -193,7 +227,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
 
     const assumptionSuffix = parsed.assumptions.length > 0 ? `（假设：${parsed.assumptions.join('；')}）` : '';
     const confidenceSuffix = parsed.confidence === 'low' ? '（低置信度）' : '';
-    const header = `解析为：${parsed.isoTimestamp} (${requesterTimezone})${assumptionSuffix}${confidenceSuffix}`;
+    const header = `解析为：${parsed.isoTimestamp} (${parserTimezone})${assumptionSuffix}${confidenceSuffix}`;
 
     let lines: string[];
     if (isGroupChat) {
@@ -228,7 +262,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
 
     await api.sendMessage(ctx.bot.api.toString(), {
       chat_id: chatId,
-      reply_to_message_id: message.message_id,
+      reply_to_message_id: replyToMessageId,
       text,
       parse_mode: '',
     });

@@ -30,8 +30,28 @@ function createTzmUpdate(params?: {
 	senderId?: number;
 	messageId?: number;
 	text?: string;
+	replyTo?: {
+		senderId: number;
+		messageId: number;
+		text?: string;
+	};
 }): Record<string, unknown> {
-	const { chatType = 'group', chatId = 42, senderId = 7, messageId = 10, text = '/tzm 明天下午五点' } = params ?? {};
+	const { chatType = 'group', chatId = 42, senderId = 7, messageId = 10, text = '/tzm 明天下午五点', replyTo } = params ?? {};
+
+	const replyToMessage =
+		replyTo === undefined
+			? undefined
+			: {
+				message_id: replyTo.messageId,
+				date: 1700000000,
+				text: replyTo.text ?? '',
+				from: {
+					id: replyTo.senderId,
+					is_bot: false,
+					first_name: 'reply_sender',
+					username: 'reply_sender_u',
+				},
+			};
 
 	return {
 		update_id: 1,
@@ -49,6 +69,7 @@ function createTzmUpdate(params?: {
 				first_name: 'sender',
 				username: 'sender_u',
 			},
+			reply_to_message: replyToMessage,
 		},
 	};
 }
@@ -195,6 +216,62 @@ describe('/tzm', () => {
 		const replyTo = await readOutboundParam(input, init, 'reply_to_message_id');
 		expect(text).toBe('请私聊 bot 用 /start 初始化');
 		expect(replyTo).toBe('102');
+	});
+
+	it('reply /tzm 时解析被回复消息，并优先使用被回复用户的时区', async () => {
+		await upsertUserTimezone(env, createProfile('2002', { firstName: 'Bob' }), 'Europe/Dublin');
+		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Alice' }), 'Asia/Shanghai');
+
+		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
+			async () => ({
+				response: {
+					ok: true,
+					isoTimestamp: '2026-02-10T17:00:00+08:00',
+					confidence: 'high',
+					assumptions: [],
+					error: '',
+				},
+			}),
+		);
+
+		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+			async () => createTelegramOkResponse(),
+		);
+		vi.stubGlobal('fetch', outboundFetch);
+		vi.spyOn(console, 'log').mockImplementation(() => {});
+
+		const response = await runWebhook(
+			createTzmUpdate({
+				chatType: 'group',
+				senderId: 2002,
+				messageId: 111,
+				text: '/tzm',
+				replyTo: {
+					senderId: 1001,
+					messageId: 110,
+					text: '明天下午五点我们一起来看比赛',
+				},
+			}),
+			{ run: aiRun },
+		);
+		expect(response.status).toBe(200);
+		expect(outboundFetch).toHaveBeenCalledTimes(1);
+		expect(aiRun).toHaveBeenCalledTimes(1);
+
+		const aiCall = aiRun.mock.calls[0];
+		const aiPayload = (aiCall?.[1] ?? {}) as Record<string, unknown>;
+		const messages = aiPayload.messages as Array<{ role: string; content: string }>;
+		const prompt = JSON.parse(messages[1]?.content ?? '{}') as {
+			expression?: string;
+			requesterTimezone?: string;
+			currentTime?: string;
+		};
+		expect(prompt.expression).toBe('明天下午五点我们一起来看比赛');
+		expect(prompt.requesterTimezone).toBe('Asia/Shanghai');
+
+		const [input, init] = outboundFetch.mock.calls[0];
+		const replyTo = await readOutboundParam(input, init, 'reply_to_message_id');
+		expect(replyTo).toBe('110');
 	});
 
 	it('成功解析：首行回显解析为，后续按 /tza 行格式输出成员当地时间', async () => {
