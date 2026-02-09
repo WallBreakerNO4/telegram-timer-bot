@@ -199,11 +199,19 @@ describe("/tza", () => {
 		const expectedNewYork = formatLocalTime("America/New_York", now);
 		const expectedShanghai = formatLocalTime("Asia/Shanghai", now);
 
+		const toDateTime = (localTime: { ok: true; value: string } | { ok: false; error: string }, timezone: string): string => {
+			if (!localTime.ok) {
+				return localTime.error;
+			}
+			const suffix = ` (${timezone})`;
+			return localTime.value.endsWith(suffix) ? localTime.value.slice(0, -suffix.length) : localTime.value;
+		};
+
 		expect(text).toBe(
 			[
-				`@bob_u: ${expectedLondon.ok ? expectedLondon.value : expectedLondon.error}`,
-				`1003: ${expectedNewYork.ok ? expectedNewYork.value : expectedNewYork.error}`,
-				`Alice Li: ${expectedShanghai.ok ? expectedShanghai.value : expectedShanghai.error}`,
+				`${toDateTime(expectedLondon, "Europe/London")}  @bob_u (Europe/London)`,
+				`${toDateTime(expectedNewYork, "America/New_York")}  1003 (America/New_York)`,
+				`${toDateTime(expectedShanghai, "Asia/Shanghai")}  Alice Li (Asia/Shanghai)`,
 			].join("\n"),
 		);
 	});

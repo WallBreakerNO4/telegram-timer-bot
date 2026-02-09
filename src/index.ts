@@ -280,8 +280,18 @@ function createBot(token: string, env: Env): TelegramBot {
 		const users = await listRegisteredSeenUsers(env, chatId);
 		const lines = users.map((user) => {
 			const localTime = formatLocalTime(user.timezone, new Date());
-			const timeText = localTime.ok ? localTime.value : localTime.error;
-			return `${getDisplayName(user)}: ${timeText}`;
+			const displayName = getDisplayName(user);
+			if (!localTime.ok) {
+				return `${displayName}: ${localTime.error}`;
+			}
+
+			const suffix = ` (${user.timezone})`;
+			if (!localTime.value.endsWith(suffix)) {
+				return `${localTime.value}  ${displayName}`;
+			}
+
+			const dateTime = localTime.value.slice(0, -suffix.length);
+			return `${dateTime}  ${displayName} (${user.timezone})`;
 		});
 		const text = buildTzaMessage(lines);
 
