@@ -32,6 +32,9 @@
             "migrations_dir": "migrations"
         }
     ],
+    "ai": {
+        "binding": "AI"
+    },
     /**
 	 * Environment Variables
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
