@@ -5,6 +5,7 @@
 - Cloudflare Workers 上的 Telegram Bot（Wrangler 部署）
 - 私聊：`/start`、`/changetz` 通过 Inline Keyboard 选择并保存 IANA 时区
 - 群聊：`/tz` 查自己或 reply 目标的当地时间；`/tza` 汇总本群已登记且“见过”的成员当地时间
+- `/tzm`：把自然语言时间解析为单次时间点，并按成员时区展示（需要 Cloudflare `AI` binding）
 - 存储：Cloudflare D1（表 `users` / `chat_users`）
 
 ## 项目概览与关键文件
@@ -36,6 +37,7 @@
 - 全量：`pnpm test`
 - 单文件：`pnpm test -- test/db.spec.ts`（也可：`pnpm test -- --run test/db.spec.ts`）
 - 单用例名：`pnpm test -- -t "returns 404 when token path is invalid"`
+- 单用例 + 只跑一次：`pnpm test -- --run -t "..."`
 - 常用：watch `pnpm test -- --watch`；只跑一次 `pnpm test -- --run`
   - 单文件 watch：`pnpm test -- --watch test/tz.spec.ts`
 
@@ -46,10 +48,12 @@ Workers pool：
 ### Lint / 格式化
 - 目前没有 `lint`/`format` scripts（如果要加，写进 `package.json`，保持快速且可重复）
 - 已存在配置：`.editorconfig`（tab、LF、去尾随空格）；`.prettierrc`（`printWidth=140`、单引号、分号、tab）
-- 现有文件的引号/缩进可能混用（历史原因）；新增或修改时优先遵循 `.prettierrc`，并尽量保持“同一文件内”风格一致
+- 注意：`.editorconfig` 与 `.prettierrc` 的缩进（space vs tab）存在历史不一致；不要全仓扫格式化
+- 新增或修改时：优先保持“同一文件内”风格一致；必要时以 `.prettierrc` 为目标（单引号/分号/printWidth）
 
 ### 类型检查（可选）
 - 目前没有 `typecheck` script；需要时可直接跑：`pnpm exec tsc -p tsconfig.json`
+- 说明：`tsconfig.json` 默认 `exclude: ["test"]`，`tsc` 不会检查测试文件；测试侧的类型问题主要靠 Vitest/编辑器提示
 
 ## Cursor / Copilot 规则
 - 未发现：`.cursor/rules/`、`.cursorrules`、`.github/copilot-instructions.md`
@@ -63,6 +67,7 @@ Workers pool：
 - 不要提交敏感信息：真实 token、`.dev.vars*`、`.env*`（这些应只存在本地）
 - 不要手改生成文件：`worker-configuration.d.ts`
 - 提交信息：中文；尽量原子、聚焦
+- 禁止用 `as any`、`@ts-ignore`、`@ts-expect-error` 去“压住”类型错误；应收窄类型或补齐分支
 
 ## 代码风格与约定（按现有代码来）
 
@@ -72,6 +77,8 @@ Workers pool：
 - 纯工具：`src/time_format.ts`、`src/timezones.ts`
 - callback 编解码：`src/callback_data.ts`
 - Inline Keyboard 视图：`src/handlers/timezone_keyboard.ts`
+- Telegram API 兼容封装：`src/telegram_api.ts`（不同版本 API 命名差异）
+- 文本拼装与截断：`src/telegram_text.ts`（受 Telegram 4096 限制）
 
 ### import
 - 第三方在前，本地相对路径在后；两组之间空一行
@@ -92,6 +99,7 @@ Workers pool：
 - 校验/解析类错误：返回结构化错误（code/message）而不是随意 throw
 - 只有真正异常才 throw；在边界 catch 并转成用户可理解的提示（例如 Telegram callback 流）
 - 不要吞错：catch 后要么返回安全值、要么映射为结构化错误、要么给用户反馈
+- 允许在用户交互边界做“兜底吞错”（比如 callback 流只提示重试），但不要悄悄失败；必要时在边界 `console.error`
 
 ### 异步与副作用
 - 以 `async/await` 为主；handler 统一返回 `Promise<Response>`
@@ -106,6 +114,7 @@ Workers pool：
 ### Cloudflare env / secrets
 - 必需 secret：`SECRET_TELEGRAM_API_TOKEN`（声明在 `src/env.d.ts`）
 - D1 binding：`DB`（见 `wrangler.jsonc` 与 `worker-configuration.d.ts`）
+- AI binding：`AI`（用于 `/tzm`，见 `wrangler.jsonc`）
 - 不要提交真实 token；生产用 Wrangler secrets
 - 本地敏感信息放 `.dev.vars*` / `.env*`（仓库已在 `.gitignore` 中忽略，保留 `*.example`）
 
