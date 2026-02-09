@@ -5,7 +5,7 @@ import {
   encodeCallbackData,
   getCallbackDataByteLength,
 } from "../src/callback_data";
-import { formatLocalTime } from "../src/time_format";
+import { formatLocalTime, formatUtcOffset } from "../src/time_format";
 import {
   getSupportedTimezones,
   getTimezoneRegions,
@@ -62,16 +62,33 @@ describe("timezones", () => {
 });
 
 describe("formatLocalTime", () => {
-  it("formats fixed timestamp into YYYY-MM-DD HH:mm (TimeZone)", () => {
+  it("formats fixed timestamp into MM-DD HH:mm", () => {
     const now = new Date("2024-03-01T00:05:00.000Z");
     expect(formatLocalTime("Asia/Shanghai", now)).toEqual({
       ok: true,
-      value: "2024-03-01 08:05 (Asia/Shanghai)",
+      value: "03-01 08:05",
     });
   });
 
   it("returns recoverable error for invalid timezone", () => {
     expect(formatLocalTime("Mars/Base", new Date("2024-03-01T00:05:00.000Z"))).toEqual({
+      ok: false,
+      error: "无效时区: Mars/Base",
+    });
+  });
+});
+
+describe("formatUtcOffset", () => {
+  it("computes UTC offset for fixed timestamp", () => {
+    const now = new Date("2024-03-01T00:05:00.000Z");
+    expect(formatUtcOffset("Asia/Shanghai", now)).toEqual({
+      ok: true,
+      value: "UTC+8",
+    });
+  });
+
+  it("returns recoverable error for invalid timezone", () => {
+    expect(formatUtcOffset("Mars/Base", new Date("2024-03-01T00:05:00.000Z"))).toEqual({
       ok: false,
       error: "无效时区: Mars/Base",
     });
