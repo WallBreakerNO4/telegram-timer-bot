@@ -8,6 +8,7 @@ import { getSupportedTimezones } from "../src/timezones";
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 const TEST_TOKEN = "123456:test_token";
+const TEST_BOT_USERNAME = "WallBreakerNO4_Timer_bot";
 
 function createTelegramOkResponse(): Response {
   return new Response(JSON.stringify({ ok: true, result: true }), {
@@ -28,17 +29,17 @@ function readOutboundUrl(input: RequestInfo | URL): string {
   return input instanceof Request ? input.url : String(input);
 }
 
-function createStartUpdate(chatType: "private" | "group"): Record<string, unknown> {
-  return {
-    update_id: 1,
-    message: {
-      message_id: 10,
-      date: 1700000000,
-      text: "/start",
-      chat: {
-        id: 42,
-        type: chatType,
-      },
+function createStartUpdate(chatType: "private" | "group", text = "/start"): Record<string, unknown> {
+	return {
+		update_id: 1,
+		message: {
+			message_id: 10,
+			date: 1700000000,
+			text,
+			chat: {
+				id: 42,
+				type: chatType,
+			},
       from: {
         id: 7,
         is_bot: false,
@@ -80,11 +81,15 @@ function createCallbackUpdate(
 }
 
 async function runWebhook(update: Record<string, unknown>): Promise<Response> {
-  const request = createWebhookRequest(update);
-  const ctx = createExecutionContext();
-  const response = await worker.fetch(request, { ...env, SECRET_TELEGRAM_API_TOKEN: TEST_TOKEN }, ctx);
-  await waitOnExecutionContext(ctx);
-  return response;
+	const request = createWebhookRequest(update);
+	const ctx = createExecutionContext();
+	const response = await worker.fetch(
+		request,
+		{ ...env, SECRET_TELEGRAM_API_TOKEN: TEST_TOKEN, TELEGRAM_BOT_USERNAME: TEST_BOT_USERNAME },
+		ctx,
+	);
+	await waitOnExecutionContext(ctx);
+	return response;
 }
 
 beforeEach(async () => {
@@ -99,10 +104,42 @@ afterEach(() => {
 });
 
 describe("/start 与 callback 单消息流", () => {
-  it("/start 非私聊时提示请私聊", async () => {
-    const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-      async () => createTelegramOkResponse(),
-    );
+	it("/start@BotUsername 私聊时也能触发", async () => {
+		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+			async () => createTelegramOkResponse(),
+		);
+		vi.stubGlobal("fetch", outboundFetch);
+		vi.spyOn(console, "log").mockImplementation(() => {});
+
+		const response = await runWebhook(createStartUpdate("private", "/start@WallBreakerNO4_Timer_bot"));
+		expect(response.status).toBe(200);
+		expect(outboundFetch).toHaveBeenCalledTimes(1);
+		const callUrl = readOutboundUrl(outboundFetch.mock.calls[0][0]);
+		const parsed = new URL(callUrl);
+		expect(parsed.pathname).toContain("/sendMessage");
+		expect(parsed.searchParams.get("text")).toBe("请选择区域");
+	});
+
+	it("/changetz@BotUsername 私聊时也能触发", async () => {
+		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+			async () => createTelegramOkResponse(),
+		);
+		vi.stubGlobal("fetch", outboundFetch);
+		vi.spyOn(console, "log").mockImplementation(() => {});
+
+		const response = await runWebhook(createStartUpdate("private", "/changetz@WallBreakerNO4_Timer_bot"));
+		expect(response.status).toBe(200);
+		expect(outboundFetch).toHaveBeenCalledTimes(1);
+		const callUrl = readOutboundUrl(outboundFetch.mock.calls[0][0]);
+		const parsed = new URL(callUrl);
+		expect(parsed.pathname).toContain("/sendMessage");
+		expect(parsed.searchParams.get("text")).toBe("请选择区域");
+	});
+
+	it("/start 非私聊时提示请私聊", async () => {
+		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+			async () => createTelegramOkResponse(),
+		);
     vi.stubGlobal("fetch", outboundFetch);
     vi.spyOn(console, "log").mockImplementation(() => {});
 

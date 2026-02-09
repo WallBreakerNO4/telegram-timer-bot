@@ -7,6 +7,7 @@ import worker from "../src/index";
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 const TEST_TOKEN = "123456:test_token";
+const TEST_BOT_USERNAME = "WallBreakerNO4_Timer_bot";
 
 function createTelegramOkResponse(): Response {
   return new Response(JSON.stringify({ ok: true, result: true }), {
@@ -31,6 +32,7 @@ function createTzUpdate(params?: {
   replyToMessageId?: number;
   replyUserId?: number;
   replyUsername?: string;
+  text?: string;
 }): Record<string, unknown> {
   const {
     chatType = "private",
@@ -40,6 +42,7 @@ function createTzUpdate(params?: {
     replyToMessageId,
     replyUserId = 8,
     replyUsername = "target_u",
+    text = "/tz",
   } = params ?? {};
 
   return {
@@ -47,7 +50,7 @@ function createTzUpdate(params?: {
     message: {
       message_id: messageId,
       date: 1700000000,
-      text: "/tz",
+      text,
       chat: {
         id: 42,
         type: chatType,
@@ -84,7 +87,11 @@ function createTzUpdate(params?: {
 async function runWebhook(update: Record<string, unknown>): Promise<Response> {
   const request = createWebhookRequest(update);
   const ctx = createExecutionContext();
-  const response = await worker.fetch(request, { ...env, SECRET_TELEGRAM_API_TOKEN: TEST_TOKEN }, ctx);
+  const response = await worker.fetch(
+    request,
+    { ...env, SECRET_TELEGRAM_API_TOKEN: TEST_TOKEN, TELEGRAM_BOT_USERNAME: TEST_BOT_USERNAME },
+    ctx,
+  );
   await waitOnExecutionContext(ctx);
   return response;
 }
@@ -161,6 +168,27 @@ afterEach(() => {
 });
 
 describe("/tz", () => {
+  it("支持 /tz@BotUsername 形式的群聊命令", async () => {
+    await upsertUserTimezone(env, createProfile("7", "sender_u"), "Asia/Shanghai");
+
+    const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async () => createTelegramOkResponse(),
+    );
+    vi.stubGlobal("fetch", outboundFetch);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const response = await runWebhook(
+      createTzUpdate({ chatType: "group", messageId: 100, text: "/tz@WallBreakerNO4_Timer_bot" }),
+    );
+    expect(response.status).toBe(200);
+    expect(outboundFetch).toHaveBeenCalledTimes(1);
+
+    const [input, init] = outboundFetch.mock.calls[0];
+    const text = await readOutboundParam(input, init, "text");
+    const expected = formatLocalTime("Asia/Shanghai", new Date());
+    expect(text).toBe(expected.ok ? expected.value : expected.error);
+  });
+
   it("自查：未 reply 时查发送者并回复命令消息，群聊写入 sender seen", async () => {
     await upsertUserTimezone(env, createProfile("7", "sender_u"), "Asia/Shanghai");
 
