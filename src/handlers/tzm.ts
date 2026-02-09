@@ -46,6 +46,45 @@ function getTelegramMessageText(message: unknown): string {
   return '';
 }
 
+type DateTimeParts = { date: string; time: string };
+
+function formatDateTimePartsInTimeZone(timeZone: string, date: Date): { ok: true; value: DateTimeParts } | { ok: false } {
+  try {
+    const formatter = new Intl.DateTimeFormat('en', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    });
+
+    const parts = formatter.formatToParts(date);
+    const year = parts.find((item) => item.type === 'year')?.value;
+    const month = parts.find((item) => item.type === 'month')?.value;
+    const day = parts.find((item) => item.type === 'day')?.value;
+    const hour = parts.find((item) => item.type === 'hour')?.value;
+    const minute = parts.find((item) => item.type === 'minute')?.value;
+    const second = parts.find((item) => item.type === 'second')?.value;
+
+    if (!year || !month || !day || !hour || !minute || !second) {
+      return { ok: false };
+    }
+
+    return {
+      ok: true,
+      value: {
+        date: `${year}-${month}-${day}`,
+        time: `${hour}:${minute}:${second}`,
+      },
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+
 export function registerTzmHandler(bot: TelegramBot, env: Env): void {
   bot.on('tzm', async (ctx: TelegramExecutionContext) => {
     const message = ctx.update.message;
@@ -130,7 +169,10 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
       }
     }
 
-    const nowIso = new Date().toISOString();
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const nowInRequesterTimezone = formatDateTimePartsInTimeZone(parserTimezone, now);
+    const nowUtcOffset = formatUtcOffset(parserTimezone, now);
     const parseFailureText = '解析失败：请用更具体的表达，例如：/tzm 明天下午五点';
     const schema = {
       type: 'object',
@@ -159,21 +201,27 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
     let parsed: TzmParseResult;
     try {
       const aiResult = await runWithTimeout(
-        ai.run('@cf/meta/llama-3.1-8b-instruct', {
+        ai.run('@cf/meta/llama-3.1-8b-instruct-fast', {
+          // ai.run('@cf/qwen/qwen3-30b-a3b-fp8', {
           messages: [
             {
               role: 'system',
               content: TZM_SYSTEM_PROMPT,
             },
-            {
-              role: 'user',
-              content: JSON.stringify({
-                expression,
-                requesterTimezone: parserTimezone,
-                currentTime: nowIso,
-              }),
-            },
-          ],
+             {
+               role: 'user',
+               content: JSON.stringify({
+                 expression,
+                 requesterTimezone: parserTimezone,
+                 currentTimeUtc: nowIso,
+                 currentDateInRequesterTimezone: nowInRequesterTimezone.ok ? nowInRequesterTimezone.value.date : undefined,
+                 currentTimeInRequesterTimezone: nowInRequesterTimezone.ok
+                   ? `${nowInRequesterTimezone.value.date}T${nowInRequesterTimezone.value.time}`
+                   : undefined,
+                 currentUtcOffsetInRequesterTimezone: nowUtcOffset.ok ? nowUtcOffset.value : undefined,
+               }),
+             },
+           ],
           response_format: {
             type: 'json_schema',
             json_schema: schema,

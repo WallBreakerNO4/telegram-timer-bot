@@ -264,7 +264,10 @@ describe('/tzm', () => {
 		const prompt = JSON.parse(messages[1]?.content ?? '{}') as {
 			expression?: string;
 			requesterTimezone?: string;
-			currentTime?: string;
+			currentTimeUtc?: string;
+			currentDateInRequesterTimezone?: string;
+			currentTimeInRequesterTimezone?: string;
+			currentUtcOffsetInRequesterTimezone?: string;
 		};
 		expect(prompt.expression).toBe('明天下午五点我们一起来看比赛');
 		expect(prompt.requesterTimezone).toBe('Asia/Shanghai');
@@ -316,7 +319,7 @@ describe('/tzm', () => {
 		const aiCall = aiRun.mock.calls[0];
 		const model = String(aiCall?.[0] ?? '');
 		const aiPayload = (aiCall?.[1] ?? {}) as Record<string, unknown>;
-		expect(model).toBe('@cf/meta/llama-3.1-8b-instruct');
+		expect(model).toBe('@cf/meta/llama-3.1-8b-instruct-fast');
 		expect(aiPayload.response_format).toMatchObject({ type: 'json_schema' });
 
 		const messages = aiPayload.messages as Array<{ role: string; content: string }>;
@@ -328,12 +331,15 @@ describe('/tzm', () => {
 		const prompt = JSON.parse(messages[1]?.content ?? '{}') as {
 			expression?: string;
 			requesterTimezone?: string;
-			currentTime?: string;
+			currentTimeUtc?: string;
+			currentDateInRequesterTimezone?: string;
+			currentTimeInRequesterTimezone?: string;
+			currentUtcOffsetInRequesterTimezone?: string;
 			users?: unknown;
 		};
 		expect(prompt.expression).toBe('明天下午五点');
 		expect(prompt.requesterTimezone).toBe('Asia/Shanghai');
-		expect(typeof prompt.currentTime).toBe('string');
+		expect(typeof prompt.currentTimeUtc).toBe('string');
 		expect(prompt.users).toBeUndefined();
 
 		const [input, init] = outboundFetch.mock.calls[0];
@@ -354,6 +360,51 @@ describe('/tzm', () => {
 			shLocal.ok && shOffset.ok ? `${shOffset.value} (${shLocal.value}) | Alice Li` : '';
 
 		expect(lines.slice(1).join('\n')).toBe([expectedShanghaiLine, expectedDublinLine].join('\n'));
+	});
+
+	it('给 AI 提供请求者时区的当前日期，避免 UTC 日期导致“明天”偏移', async () => {
+		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Alice' }), 'Asia/Shanghai');
+
+		vi.setSystemTime(new Date('2026-02-09T16:30:00.000Z'));
+
+		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
+			async () => ({
+				response: {
+					ok: true,
+					isoTimestamp: '2026-02-11T11:00:00+08:00',
+					confidence: 'high',
+					assumptions: [],
+					error: '',
+				},
+			}),
+		);
+
+		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+			async () => createTelegramOkResponse(),
+		);
+		vi.stubGlobal('fetch', outboundFetch);
+		vi.spyOn(console, 'log').mockImplementation(() => {});
+
+		const response = await runWebhook(createTzmUpdate({ chatType: 'group', messageId: 120, senderId: 1001, text: '/tzm 明天中午11点' }), {
+			run: aiRun,
+		});
+		expect(response.status).toBe(200);
+		expect(aiRun).toHaveBeenCalledTimes(1);
+
+		const aiCall = aiRun.mock.calls[0];
+		const aiPayload = (aiCall?.[1] ?? {}) as Record<string, unknown>;
+		const messages = aiPayload.messages as Array<{ role: string; content: string }>;
+		const prompt = JSON.parse(messages[1]?.content ?? '{}') as {
+			currentTimeUtc?: string;
+			currentDateInRequesterTimezone?: string;
+			currentTimeInRequesterTimezone?: string;
+			currentUtcOffsetInRequesterTimezone?: string;
+		};
+
+		expect(prompt.currentTimeUtc).toBe('2026-02-09T16:30:00.000Z');
+		expect(prompt.currentDateInRequesterTimezone).toBe('2026-02-10');
+		expect(prompt.currentTimeInRequesterTimezone).toBe('2026-02-10T00:30:00');
+		expect(prompt.currentUtcOffsetInRequesterTimezone).toBe('UTC+8');
 	});
 
 	it('AI 返回 ok=false 时回复稳定错误文案', async () => {
