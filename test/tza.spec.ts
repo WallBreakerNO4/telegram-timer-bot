@@ -1,7 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { formatLocalTime } from "../src/time_format";
+import { formatLocalTime, formatUtcOffset } from "../src/time_format";
 import { initSchema, markSeen, upsertUserTimezone, type UserProfile } from "../src/db";
 import worker from "../src/index";
 
@@ -222,20 +222,27 @@ describe("/tza", () => {
 		const expectedLondon = formatLocalTime("Europe/London", now);
 		const expectedNewYork = formatLocalTime("America/New_York", now);
 		const expectedShanghai = formatLocalTime("Asia/Shanghai", now);
-
-		const toDateTime = (localTime: { ok: true; value: string } | { ok: false; error: string }, timezone: string): string => {
-			if (!localTime.ok) {
-				return localTime.error;
-			}
-			const suffix = ` (${timezone})`;
-			return localTime.value.endsWith(suffix) ? localTime.value.slice(0, -suffix.length) : localTime.value;
-		};
+		const expectedLondonOffset = formatUtcOffset("Europe/London", now);
+		const expectedNewYorkOffset = formatUtcOffset("America/New_York", now);
+		const expectedShanghaiOffset = formatUtcOffset("Asia/Shanghai", now);
 
 		expect(text).toBe(
 			[
-				`${toDateTime(expectedLondon, "Europe/London")}  @bob_u (Europe/London)`,
-				`${toDateTime(expectedNewYork, "America/New_York")}  1003 (America/New_York)`,
-				`${toDateTime(expectedShanghai, "Asia/Shanghai")}  Alice Li (Asia/Shanghai)`,
+				expectedLondon.ok
+				? expectedLondonOffset.ok
+					? `${expectedLondonOffset.value} (${expectedLondon.value}) | @bob_u`
+					: `@bob_u: ${expectedLondonOffset.error}`
+				: `@bob_u: ${expectedLondon.error}`,
+				expectedNewYork.ok
+				? expectedNewYorkOffset.ok
+					? `${expectedNewYorkOffset.value} (${expectedNewYork.value}) | 1003`
+					: `1003: ${expectedNewYorkOffset.error}`
+				: `1003: ${expectedNewYork.error}`,
+				expectedShanghai.ok
+				? expectedShanghaiOffset.ok
+					? `${expectedShanghaiOffset.value} (${expectedShanghai.value}) | Alice Li`
+					: `Alice Li: ${expectedShanghaiOffset.error}`
+				: `Alice Li: ${expectedShanghai.error}`,
 			].join("\n"),
 		);
 	});

@@ -1,7 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { formatLocalTime } from "../src/time_format";
+import { formatLocalTime, formatUtcOffset } from "../src/time_format";
 import { initSchema, upsertUserTimezone, type UserProfile } from "../src/db";
 import worker from "../src/index";
 
@@ -185,8 +185,18 @@ describe("/tz", () => {
 
     const [input, init] = outboundFetch.mock.calls[0];
     const text = await readOutboundParam(input, init, "text");
-    const expected = formatLocalTime("Asia/Shanghai", new Date());
-    expect(text).toBe(expected.ok ? expected.value : expected.error);
+    const now = new Date();
+    const expectedTime = formatLocalTime("Asia/Shanghai", now);
+    const expectedOffset = formatUtcOffset("Asia/Shanghai", now);
+    let expected: string;
+    if (!expectedTime.ok) {
+      expected = expectedTime.error;
+    } else if (!expectedOffset.ok) {
+      expected = expectedOffset.error;
+    } else {
+      expected = `${expectedOffset.value} (${expectedTime.value}) | sender`;
+    }
+    expect(text).toBe(expected);
   });
 
   it("自查：未 reply 时查发送者并回复命令消息，群聊写入 sender seen", async () => {
@@ -205,9 +215,19 @@ describe("/tz", () => {
     const [input, init] = outboundFetch.mock.calls[0];
     const text = await readOutboundParam(input, init, "text");
     const replyTo = await readOutboundParam(input, init, "reply_to_message_id");
-    const expected = formatLocalTime("Asia/Shanghai", new Date());
+    const now = new Date();
+    const expectedTime = formatLocalTime("Asia/Shanghai", now);
+    const expectedOffset = formatUtcOffset("Asia/Shanghai", now);
+    let expected: string;
+    if (!expectedTime.ok) {
+      expected = expectedTime.error;
+    } else if (!expectedOffset.ok) {
+      expected = expectedOffset.error;
+    } else {
+      expected = `${expectedOffset.value} (${expectedTime.value}) | sender`;
+    }
 
-    expect(text).toBe(expected.ok ? expected.value : expected.error);
+    expect(text).toBe(expected);
     expect(replyTo).toBe("101");
 
     const seenRows = await env.DB.prepare(
@@ -244,9 +264,19 @@ describe("/tz", () => {
     const [input, init] = outboundFetch.mock.calls[0];
     const text = await readOutboundParam(input, init, "text");
     const replyTo = await readOutboundParam(input, init, "reply_to_message_id");
-    const expected = formatLocalTime("Europe/London", new Date());
+    const now = new Date();
+    const expectedTime = formatLocalTime("Europe/London", now);
+    const expectedOffset = formatUtcOffset("Europe/London", now);
+    let expected: string;
+    if (!expectedTime.ok) {
+      expected = expectedTime.error;
+    } else if (!expectedOffset.ok) {
+      expected = expectedOffset.error;
+    } else {
+      expected = `${expectedOffset.value} (${expectedTime.value}) | target`;
+    }
 
-    expect(text).toBe(expected.ok ? expected.value : expected.error);
+    expect(text).toBe(expected);
     expect(replyTo).toBe("188");
 
     const seenRows = await env.DB.prepare(

@@ -6,7 +6,6 @@ import {
 	listRegisteredSeenUsers,
 	markSeen,
 	upsertUserTimezone,
-	type SeenRegisteredUser,
 	type UserProfile,
 } from './db';
 import {
@@ -14,7 +13,7 @@ import {
 	buildTimezonePageView,
 	DEFAULT_TIMEZONE_PAGE_SIZE,
 } from './handlers/timezone_keyboard';
-import { formatLocalTime } from './time_format';
+import { formatLocalTime, formatUtcOffset } from './time_format';
 import { getSupportedTimezones } from './timezones';
 
 type TelegramHandler = (ctx: TelegramExecutionContext) => Promise<Response>;
@@ -78,7 +77,14 @@ function getUserProfileFromMessageUser(
 	};
 }
 
-function getDisplayName(user: SeenRegisteredUser): string {
+type DisplayNameSource = {
+	userId: string;
+	username?: string | null;
+	firstName?: string | null;
+	lastName?: string | null;
+};
+
+function getDisplayName(user: DisplayNameSource): string {
 	const nickname = [user.firstName, user.lastName]
 		.filter((value): value is string => Boolean(value && value.trim()))
 		.join(' ')
@@ -229,6 +235,7 @@ function createBot(token: string, env: Env): TelegramBot {
 
 		const replyTarget = getUserProfileFromMessageUser(message.reply_to_message?.from);
 		const targetUserId = replyTarget?.userId ?? requester.userId;
+		const targetProfile = replyTarget ?? requester;
 		const replyToMessageId = message.reply_to_message?.message_id ?? message.message_id;
 
 		await initSchema(env);
@@ -243,8 +250,16 @@ function createBot(token: string, env: Env): TelegramBot {
 		const timezone = await getUserTimezone(env, targetUserId);
 		const text = timezone
 			? (() => {
-				const localTime = formatLocalTime(timezone, new Date());
-				return localTime.ok ? localTime.value : localTime.error;
+				const now = new Date();
+				const localTime = formatLocalTime(timezone, now);
+				if (!localTime.ok) {
+					return localTime.error;
+				}
+				const utcOffset = formatUtcOffset(timezone, now);
+				if (!utcOffset.ok) {
+					return utcOffset.error;
+				}
+				return `${utcOffset.value} (${localTime.value}) | ${getDisplayName(targetProfile)}`;
 			})()
 			: '请私聊 bot 用 /start 初始化';
 
@@ -278,20 +293,18 @@ function createBot(token: string, env: Env): TelegramBot {
 
 		await initSchema(env);
 		const users = await listRegisteredSeenUsers(env, chatId);
+		const now = new Date();
 		const lines = users.map((user) => {
-			const localTime = formatLocalTime(user.timezone, new Date());
+			const localTime = formatLocalTime(user.timezone, now);
 			const displayName = getDisplayName(user);
 			if (!localTime.ok) {
 				return `${displayName}: ${localTime.error}`;
 			}
-
-			const suffix = ` (${user.timezone})`;
-			if (!localTime.value.endsWith(suffix)) {
-				return `${localTime.value}  ${displayName}`;
+			const utcOffset = formatUtcOffset(user.timezone, now);
+			if (!utcOffset.ok) {
+				return `${displayName}: ${utcOffset.error}`;
 			}
-
-			const dateTime = localTime.value.slice(0, -suffix.length);
-			return `${dateTime}  ${displayName} (${user.timezone})`;
+			return `${utcOffset.value} (${localTime.value}) | ${displayName}`;
 		});
 		const text = buildTzaMessage(lines);
 
