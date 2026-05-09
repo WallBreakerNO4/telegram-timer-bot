@@ -1,10 +1,68 @@
-# 仓库代理指南（telegram-timer-bot）
-面向在本仓库中工作的智能编码代理：改动小、可验证、遵循既有模式；能写测试就先写测试。
+<!-- Generated: 2026-05-09 | Updated: 2026-05-09 -->
+
+# telegram-timer-bot
+
+## Purpose
+Cloudflare Workers 上的 Telegram Bot，提供跨时区时间查询与自然语言时间解析功能。
+
+## Key Files
+
+| File | Description |
+|------|-------------|
+| `package.json` | 项目依赖与脚本（pnpm 管理） |
+| `tsconfig.json` | TypeScript 配置（strict、isolatedModules、noEmit） |
+| `vitest.config.mts` | Vitest + `@cloudflare/vitest-pool-workers` 配置 |
+| `wrangler.jsonc` | Cloudflare Wrangler 配置（bindings、`nodejs_compat`） |
+| `worker-configuration.d.ts` | Wrangler 自动生成的类型声明（勿手改） |
+| `.dev.vars.example` | 本地环境变量模板 |
+| `.editorconfig` | 编辑器统一配置 |
+| `.prettierrc` | 代码格式化配置（printWidth=140、单引号、分号、tab） |
+| `.gitignore` | Git 忽略规则 |
+
+## Subdirectories
+
+| Directory | Purpose |
+|-----------|---------|
+| `src/` | 应用源码（Worker 入口、bot 装配、DB、工具、handlers）（见 `src/AGENTS.md`） |
+| `test/` | Vitest 测试套件（见 `test/AGENTS.md`） |
+| `migrations/` | D1 数据库迁移文件（见 `migrations/AGENTS.md`） |
+| `.vscode/` | VS Code 工作区配置（见 `.vscode/AGENTS.md`） |
+
+## For AI Agents
+
+### Working In This Directory
+- 改 bindings/config 后必须重跑 `pnpm cf-typegen`
+- 引入新依赖需确认 Workers 运行时兼容
+- git commit message 使用中文
+
+### Testing Requirements
+- 行为改动必须补 `test/*.spec.ts`
+- 部署前 `pnpm test` 全量通过
+
+### Common Patterns
+- 文件命名：`snake_case.ts`
+- 变量/函数：`camelCase`；类型/接口：`PascalCase`；常量：`SCREAMING_SNAKE_CASE`
+- 可预期失败用 result union：`{ ok: true; value: T } | { ok: false; error: ... }`
+
+## Dependencies
+
+### Internal
+- `src/index.ts` - Worker 入口，路由边界
+- `src/bot.ts` - Bot 实例装配
+
+### External
+- `@codebam/cf-workers-telegram-bot` ^9.x - Telegram Bot 框架
+- `wrangler` ^4.x - Cloudflare Workers CLI
+- `vitest` ~3.2.x - 测试框架
+- `@cloudflare/vitest-pool-workers` ^0.12.x - Workers 测试适配
+- `typescript` ^5.9.x - 类型系统
+
+<!-- MANUAL: 以下为手动维护的详细代理指令，覆盖命令、约定、检查清单等 -->
 
 ## 项目做什么
 - Cloudflare Workers 上的 Telegram Bot（Wrangler 部署）
 - 私聊：`/start`、`/changetz` 通过 Inline Keyboard 选择并保存 IANA 时区
-- 群聊：`/tz` 查自己或 reply 目标的当地时间；`/tza` 汇总本群已登记且“见过”的成员当地时间
+- 群聊：`/tz` 查自己或 reply 目标的当地时间；`/tza` 汇总本群已登记且"见过"的成员当地时间
 - `/tzm`：把自然语言时间解析为单次时间点，并按成员时区展示（需要 Cloudflare `AI` binding）
 - 存储：Cloudflare D1（表 `users` / `chat_users`）
 
@@ -49,7 +107,7 @@ Workers pool：
 - 目前没有 `lint`/`format` scripts（如果要加，写进 `package.json`，保持快速且可重复）
 - 已存在配置：`.editorconfig`（tab、LF、去尾随空格）；`.prettierrc`（`printWidth=140`、单引号、分号、tab）
 - 注意：`.editorconfig` 与 `.prettierrc` 的缩进（space vs tab）存在历史不一致；不要全仓扫格式化
-- 新增或修改时：优先保持“同一文件内”风格一致；必要时以 `.prettierrc` 为目标（单引号/分号/printWidth）
+- 新增或修改时：优先保持"同一文件内"风格一致；必要时以 `.prettierrc` 为目标（单引号/分号/printWidth）
 
 ### 类型检查（可选）
 - 目前没有 `typecheck` script；需要时可直接跑：`pnpm exec tsc -p tsconfig.json`
@@ -67,7 +125,7 @@ Workers pool：
 - 不要提交敏感信息：真实 token、`.dev.vars*`、`.env*`（这些应只存在本地）
 - 不要手改生成文件：`worker-configuration.d.ts`
 - 提交信息：中文；尽量原子、聚焦
-- 禁止用 `as any`、`@ts-ignore`、`@ts-expect-error` 去“压住”类型错误；应收窄类型或补齐分支
+- 禁止用 `as any`、`@ts-ignore`、`@ts-expect-error` 去"压住"类型错误；应收窄类型或补齐分支
 
 ## 代码风格与约定（按现有代码来）
 
@@ -92,14 +150,14 @@ Workers pool：
 
 ### 类型与返回值
 - 避免 `any`；优先窄类型与显式返回值（`Promise<...>`、`T | null`）
-- “可预期失败”用 result union：`{ ok: true; value: T } | { ok: false; error: ... }`（见 `src/callback_data.ts`、`src/time_format.ts`）
+- "可预期失败"用 result union：`{ ok: true; value: T } | { ok: false; error: ... }`（见 `src/callback_data.ts`、`src/time_format.ts`）
 - 用 `as const`/`readonly` 固化字面量与不可变数据；用 `satisfies` 做结构约束但不扩大类型（见 `src/index.ts`）
 
 ### 错误处理
 - 校验/解析类错误：返回结构化错误（code/message）而不是随意 throw
 - 只有真正异常才 throw；在边界 catch 并转成用户可理解的提示（例如 Telegram callback 流）
 - 不要吞错：catch 后要么返回安全值、要么映射为结构化错误、要么给用户反馈
-- 允许在用户交互边界做“兜底吞错”（比如 callback 流只提示重试），但不要悄悄失败；必要时在边界 `console.error`
+- 允许在用户交互边界做"兜底吞错"（比如 callback 流只提示重试），但不要悄悄失败；必要时在边界 `console.error`
 
 ### 异步与副作用
 - 以 `async/await` 为主；handler 统一返回 `Promise<Response>`
