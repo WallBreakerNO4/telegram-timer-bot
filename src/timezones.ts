@@ -1,3 +1,5 @@
+import { EXCLUDED_TZ_REGION, LOCALE } from './config';
+
 const FALLBACK_TIMEZONES = ["Etc/UTC"] as const;
 
 export interface TimezonePageOptions {
@@ -19,7 +21,7 @@ const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 20;
 
 function sortStable(values: readonly string[]): string[] {
-  return [...values].sort((a, b) => a.localeCompare(b, "en"));
+  return [...values].sort((a, b) => a.localeCompare(b, LOCALE));
 }
 
 function normalizePositiveInt(value: number | undefined, fallback: number): number {
@@ -52,7 +54,7 @@ export function getTimezoneRegions(timezones: readonly string[] = getSupportedTi
   const regions = new Set<string>();
   for (const timezone of timezones) {
     const [region] = timezone.split("/");
-    if (!region || region === "Etc") {
+    if (!region || region === EXCLUDED_TZ_REGION) {
       continue;
     }
     regions.add(region);

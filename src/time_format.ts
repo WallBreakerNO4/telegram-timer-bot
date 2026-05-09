@@ -1,3 +1,5 @@
+import { MSG_INVALID_TIMEZONE, MSG_UNABLE_TO_CALC_OFFSET } from './messages';
+
 export type FormatLocalTimeResult =
   | { ok: true; value: string }
   | { ok: false; error: string };
@@ -48,7 +50,7 @@ export function formatUtcOffset(
 
     const asIfUtc = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}.000Z`);
     if (Number.isNaN(asIfUtc.getTime())) {
-      return { ok: false, error: `无法计算时区偏移: ${timeZone}` };
+      return { ok: false, error: MSG_UNABLE_TO_CALC_OFFSET.replace('{tz}', timeZone) };
     }
 
     const offsetMinutes = Math.round((asIfUtc.getTime() - date.getTime()) / 60000);
@@ -61,7 +63,7 @@ export function formatUtcOffset(
     return { ok: true, value: `UTC${sign}${suffix}` };
   } catch (error) {
     if (error instanceof RangeError) {
-      return { ok: false, error: `无效时区: ${timeZone}` };
+      return { ok: false, error: MSG_INVALID_TIMEZONE.replace('{tz}', timeZone) };
     }
     throw error;
   }
@@ -89,7 +91,7 @@ export function formatLocalTime(
     return { ok: true, value: `${month}-${day} ${hour}:${minute}` };
   } catch (error) {
     if (error instanceof RangeError) {
-      return { ok: false, error: `无效时区: ${timeZone}` };
+      return { ok: false, error: MSG_INVALID_TIMEZONE.replace('{tz}', timeZone) };
     }
     throw error;
   }

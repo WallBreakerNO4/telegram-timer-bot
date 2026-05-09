@@ -1,7 +1,8 @@
 import TelegramBot, { type TelegramExecutionContext } from '@codebam/cf-workers-telegram-bot';
 
-import { decodeCallbackData } from '../callback_data';
+import { ACTION_BACK, ACTION_PAGE, ACTION_REGION, ACTION_TIMEZONE, decodeCallbackData } from '../callback_data';
 import { initSchema, upsertUserTimezone } from '../db';
+import { MSG_CHOOSE_REGION, MSG_EXPIRED, MSG_INVALID_ACTION, MSG_RETRY_LATER, MSG_TIMEZONE_SAVED, MSG_TIMEZONE_SET_DONE, MSG_USER_MISSING } from '../messages';
 import { answerCallbackQuery, editMessageTextWithFallback } from '../telegram_api';
 import { getUserProfileFromCallback } from '../telegram_profiles';
 import {
@@ -22,19 +23,19 @@ export function registerCallbackHandler(bot: TelegramBot, env: Env, supportedTim
     const messageId = callback.message?.message_id;
 
     if (!chatId || !messageId || !callback.data) {
-      await answerCallbackQuery(ctx, callbackId, '消息已过期，请重新 /start');
+      await answerCallbackQuery(ctx, callbackId, MSG_EXPIRED);
       return new Response('ok');
     }
 
     const decoded = decodeCallbackData(callback.data, supportedTimezones);
     if (!decoded.ok) {
-      await answerCallbackQuery(ctx, callbackId, '操作无效，请重新选择');
+      await answerCallbackQuery(ctx, callbackId, MSG_INVALID_ACTION);
       return new Response('ok');
     }
 
     try {
       switch (decoded.value.action) {
-        case 'r': {
+        case ACTION_REGION: {
           const pageView = buildTimezonePageView(
             supportedTimezones,
             decoded.value.region,
@@ -45,7 +46,7 @@ export function registerCallbackHandler(bot: TelegramBot, env: Env, supportedTim
           await answerCallbackQuery(ctx, callbackId);
           return new Response('ok');
         }
-        case 'p': {
+        case ACTION_PAGE: {
           const pageView = buildTimezonePageView(
             supportedTimezones,
             decoded.value.region,
@@ -56,16 +57,16 @@ export function registerCallbackHandler(bot: TelegramBot, env: Env, supportedTim
           await answerCallbackQuery(ctx, callbackId);
           return new Response('ok');
         }
-        case 'b': {
+        case ACTION_BACK: {
           const markup = buildRegionSelectorMarkup(supportedTimezones);
-          await editMessageTextWithFallback(ctx, chatId, messageId, '请选择区域', markup);
+          await editMessageTextWithFallback(ctx, chatId, messageId, MSG_CHOOSE_REGION, markup);
           await answerCallbackQuery(ctx, callbackId);
           return new Response('ok');
         }
-        case 't': {
+        case ACTION_TIMEZONE: {
           const userProfile = getUserProfileFromCallback(ctx);
           if (!userProfile) {
-            await answerCallbackQuery(ctx, callbackId, '用户信息缺失，请重试');
+            await answerCallbackQuery(ctx, callbackId, MSG_USER_MISSING);
             return new Response('ok');
           }
 
@@ -75,15 +76,15 @@ export function registerCallbackHandler(bot: TelegramBot, env: Env, supportedTim
             ctx,
             chatId,
             messageId,
-            `时区设置完成：${decoded.value.timezone}`,
+            MSG_TIMEZONE_SET_DONE.replace('{tz}', decoded.value.timezone),
             { inline_keyboard: [] },
           );
-          await answerCallbackQuery(ctx, callbackId, '时区已保存');
+          await answerCallbackQuery(ctx, callbackId, MSG_TIMEZONE_SAVED);
           return new Response('ok');
         }
       }
     } catch {
-      await answerCallbackQuery(ctx, callbackId, '处理失败，请稍后重试');
+      await answerCallbackQuery(ctx, callbackId, MSG_RETRY_LATER);
     }
 
     return new Response('ok');

@@ -1,3 +1,5 @@
+import { MSG_NO_MEMBERS, MSG_PARSED_AS, MSG_TRUNCATED, MSG_TRUNCATED_COUNT } from './messages';
+
 export const TELEGRAM_MESSAGE_MAX_LENGTH = 4096;
 
 function truncateText(text: string, maxLength: number): string {
@@ -13,17 +15,16 @@ function truncateText(text: string, maxLength: number): string {
 }
 
 function truncateHeaderPreservingPrefix(header: string, maxLength: number): string {
-  const prefix = '解析为：';
   if (header.length <= maxLength) {
     return header;
   }
 
-  if (maxLength <= prefix.length) {
-    return truncateText(prefix, maxLength);
+  if (maxLength <= MSG_PARSED_AS.length) {
+    return truncateText(MSG_PARSED_AS, maxLength);
   }
 
-  if (header.startsWith(prefix)) {
-    return `${prefix}${header.slice(prefix.length, maxLength)}`;
+  if (header.startsWith(MSG_PARSED_AS)) {
+    return `${MSG_PARSED_AS}${header.slice(MSG_PARSED_AS.length, maxLength)}`;
   }
 
   return truncateText(header, maxLength);
@@ -31,7 +32,7 @@ function truncateHeaderPreservingPrefix(header: string, maxLength: number): stri
 
 export function buildTzaMessage(lines: string[]): string {
   if (lines.length === 0) {
-    return '本群暂无已登记且被识别的成员';
+    return MSG_NO_MEMBERS;
   }
 
   const fullMessage = lines.join('\n');
@@ -41,7 +42,7 @@ export function buildTzaMessage(lines: string[]): string {
 
   for (let visibleCount = lines.length - 1; visibleCount >= 0; visibleCount -= 1) {
     const hiddenCount = lines.length - visibleCount;
-    const suffix = `（已截断，剩余 ${hiddenCount} 人未显示）`;
+    const suffix = MSG_TRUNCATED_COUNT.replace('{n}', String(hiddenCount));
     const visibleText = visibleCount > 0 ? lines.slice(0, visibleCount).join('\n') : '';
     const candidate = visibleText ? `${visibleText}\n${suffix}` : suffix;
 
@@ -50,12 +51,12 @@ export function buildTzaMessage(lines: string[]): string {
     }
   }
 
-  return '（已截断，剩余成员未显示）';
+  return MSG_TRUNCATED;
 }
 
 export function buildTzmMessage(header: string, lines: string[]): string {
   const normalizedHeader = header.replace(/\s*\n+\s*/gu, ' ').trim();
-  const contentLines = lines.length > 0 ? lines : ['本群暂无已登记且被识别的成员'];
+  const contentLines = lines.length > 0 ? lines : [MSG_NO_MEMBERS];
   const fullText = `${normalizedHeader}\n${contentLines.join('\n')}`;
   if (fullText.length <= TELEGRAM_MESSAGE_MAX_LENGTH) {
     return fullText;
@@ -63,7 +64,7 @@ export function buildTzmMessage(header: string, lines: string[]): string {
 
   for (let visibleCount = contentLines.length - 1; visibleCount >= 0; visibleCount -= 1) {
     const hiddenCount = contentLines.length - visibleCount;
-    const suffix = `（已截断，剩余 ${hiddenCount} 人未显示）`;
+    const suffix = MSG_TRUNCATED_COUNT.replace('{n}', String(hiddenCount));
     const visibleText = visibleCount > 0 ? contentLines.slice(0, visibleCount).join('\n') : '';
     const body = visibleText ? `${visibleText}\n${suffix}` : suffix;
     const candidate = `${normalizedHeader}\n${body}`;
@@ -73,7 +74,7 @@ export function buildTzmMessage(header: string, lines: string[]): string {
     }
   }
 
-  const fallbackSuffix = '（已截断，剩余成员未显示）';
+  const fallbackSuffix = MSG_TRUNCATED;
   const fallbackWithSuffixMaxHeaderLength = TELEGRAM_MESSAGE_MAX_LENGTH - 1 - fallbackSuffix.length;
   if (fallbackWithSuffixMaxHeaderLength > 0) {
     const truncatedHeader = truncateHeaderPreservingPrefix(normalizedHeader, fallbackWithSuffixMaxHeaderLength);

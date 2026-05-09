@@ -3,10 +3,10 @@ import { getSupportedTimezones } from "./timezones";
 const MAX_CALLBACK_BYTES = 64;
 const encoder = new TextEncoder();
 
-const ACTION_REGION = "r";
-const ACTION_PAGE = "p";
-const ACTION_BACK = "b";
-const ACTION_TIMEZONE = "t";
+export const ACTION_REGION = "r";
+export const ACTION_PAGE = "p";
+export const ACTION_BACK = "b";
+export const ACTION_TIMEZONE = "t";
 
 type CallbackAction =
   | typeof ACTION_REGION

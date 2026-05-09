@@ -1,6 +1,7 @@
 import TelegramBot, { type TelegramExecutionContext } from '@codebam/cf-workers-telegram-bot';
 
 import { getUserTimezone, initSchema, markSeen } from '../db';
+import { MSG_NEED_INIT } from '../messages';
 import { type TelegramApiCompat } from '../telegram_api';
 import { getDisplayName, getUserProfileFromMessageUser } from '../telegram_profiles';
 import { formatLocalTime, formatUtcOffset } from '../time_format';
@@ -46,7 +47,7 @@ export function registerTzHandler(bot: TelegramBot, env: Env): void {
           }
           return `${utcOffset.value} (${localTime.value}) | ${getDisplayName(targetProfile)}`;
         })()
-      : '请私聊 bot 用 /start 初始化';
+      : MSG_NEED_INIT;
 
     await (ctx.api as unknown as TelegramApiCompat).sendMessage(ctx.bot.api.toString(), {
       chat_id: chatId,

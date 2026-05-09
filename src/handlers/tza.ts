@@ -1,6 +1,7 @@
 import TelegramBot, { type TelegramExecutionContext } from '@codebam/cf-workers-telegram-bot';
 
 import { initSchema, listRegisteredSeenUsers } from '../db';
+import { MSG_GROUP_ONLY } from '../messages';
 import { type TelegramApiCompat } from '../telegram_api';
 import { getDisplayName } from '../telegram_profiles';
 import { buildTzaMessage } from '../telegram_text';
@@ -20,7 +21,7 @@ export function registerTzaHandler(bot: TelegramBot, env: Env): void {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
         reply_to_message_id: message.message_id,
-        text: '仅群聊可用',
+        text: MSG_GROUP_ONLY,
         parse_mode: '',
       });
       return new Response('ok');

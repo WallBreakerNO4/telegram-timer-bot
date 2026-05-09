@@ -1,6 +1,8 @@
 import TelegramBot, { type TelegramExecutionContext } from '@codebam/cf-workers-telegram-bot';
 
+import { AI_MODEL, AI_TIMEOUT_MS, LOCALE } from '../config';
 import { getUserTimezone, initSchema, listRegisteredSeenUsers, markSeen } from '../db';
+import { MSG_NEED_INIT, MSG_PRIVATE_OR_GROUP_ONLY, MSG_TZM_LOW_CONFIDENCE, MSG_TZM_PARSE_FAILURE, MSG_TZM_SINGLE_POINT_ONLY, MSG_TZM_USAGE } from '../messages';
 import { type TelegramApiCompat } from '../telegram_api';
 import { getDisplayName, getUserProfileFromMessageUser } from '../telegram_profiles';
 import { buildTzmMessage } from '../telegram_text';
@@ -14,12 +16,28 @@ import {
   TZM_SYSTEM_PROMPT,
 } from '../tzm_ai';
 
+const SPLIT_REGEX = /\s+/u;
+const HOUR_CYCLE = 'h23' as const;
+
+const TZM_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    ok: { type: 'boolean' },
+    isoTimestamp: { type: 'string' },
+    confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+    assumptions: { type: 'array', items: { type: 'string' } },
+    error: { type: 'string' },
+  },
+  required: ['ok', 'isoTimestamp', 'confidence', 'assumptions', 'error'],
+  additionalProperties: false,
+} as const;
+
 function parseCommandExpression(text: string | undefined): string {
   if (!text) {
     return '';
   }
 
-  const tokens = text.trim().split(/\s+/u);
+  const tokens = text.trim().split(SPLIT_REGEX);
   if (tokens.length <= 1) {
     return '';
   }
@@ -50,7 +68,7 @@ type DateTimeParts = { date: string; time: string };
 
 function formatDateTimePartsInTimeZone(timeZone: string, date: Date): { ok: true; value: DateTimeParts } | { ok: false } {
   try {
-    const formatter = new Intl.DateTimeFormat('en', {
+    const formatter = new Intl.DateTimeFormat(LOCALE, {
       timeZone,
       year: 'numeric',
       month: '2-digit',
@@ -58,7 +76,7 @@ function formatDateTimePartsInTimeZone(timeZone: string, date: Date): { ok: true
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
-      hourCycle: 'h23',
+      hourCycle: HOUR_CYCLE,
     });
 
     const parts = formatter.formatToParts(date);
@@ -102,7 +120,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
         reply_to_message_id: replyToMessageId,
-        text: '仅群聊或私聊可用',
+        text: MSG_PRIVATE_OR_GROUP_ONLY,
         parse_mode: '',
       });
       return new Response('ok');
@@ -115,7 +133,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
         reply_to_message_id: replyToMessageId,
-        text: '用法：/tzm 明天下午五点',
+        text: MSG_TZM_USAGE,
         parse_mode: '',
       });
       return new Response('ok');
@@ -125,7 +143,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
         reply_to_message_id: replyToMessageId,
-        text: '仅支持单次时间点',
+        text: MSG_TZM_SINGLE_POINT_ONLY,
         parse_mode: '',
       });
       return new Response('ok');
@@ -143,7 +161,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
         reply_to_message_id: replyToMessageId,
-        text: '请私聊 bot 用 /start 初始化',
+        text: MSG_NEED_INIT,
         parse_mode: '',
       });
       return new Response('ok');
@@ -173,26 +191,13 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
     const nowIso = now.toISOString();
     const nowInRequesterTimezone = formatDateTimePartsInTimeZone(parserTimezone, now);
     const nowUtcOffset = formatUtcOffset(parserTimezone, now);
-    const parseFailureText = '解析失败：请用更具体的表达，例如：/tzm 明天下午五点';
-    const schema = {
-      type: 'object',
-      properties: {
-        ok: { type: 'boolean' },
-        isoTimestamp: { type: 'string' },
-        confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
-        assumptions: { type: 'array', items: { type: 'string' } },
-        error: { type: 'string' },
-      },
-      required: ['ok', 'isoTimestamp', 'confidence', 'assumptions', 'error'],
-      additionalProperties: false,
-    } as const;
 
     const ai = (env as Env & { AI?: AiCompat }).AI;
     if (!ai) {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
         reply_to_message_id: replyToMessageId,
-        text: parseFailureText,
+        text: MSG_TZM_PARSE_FAILURE,
         parse_mode: '',
       });
       return new Response('ok');
@@ -201,8 +206,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
     let parsed: TzmParseResult;
     try {
       const aiResult = await runWithTimeout(
-        ai.run('@cf/meta/llama-3.1-8b-instruct-fast', {
-          // ai.run('@cf/qwen/qwen3-30b-a3b-fp8', {
+        ai.run(AI_MODEL, {
           messages: [
             {
               role: 'system',
@@ -224,10 +228,10 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
            ],
           response_format: {
             type: 'json_schema',
-            json_schema: schema,
+            json_schema: TZM_JSON_SCHEMA,
           },
         }),
-        8000,
+        AI_TIMEOUT_MS,
       );
 
       const parsedResult = parseTzmAiResponse(aiResult);
@@ -235,7 +239,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
         await api.sendMessage(ctx.bot.api.toString(), {
           chat_id: chatId,
           reply_to_message_id: replyToMessageId,
-          text: parseFailureText,
+          text: MSG_TZM_PARSE_FAILURE,
           parse_mode: '',
         });
         return new Response('ok');
@@ -246,7 +250,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
         reply_to_message_id: replyToMessageId,
-        text: parseFailureText,
+        text: MSG_TZM_PARSE_FAILURE,
         parse_mode: '',
       });
       return new Response('ok');
@@ -256,7 +260,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
         reply_to_message_id: replyToMessageId,
-        text: parseFailureText,
+        text: MSG_TZM_PARSE_FAILURE,
         parse_mode: '',
       });
       return new Response('ok');
@@ -267,14 +271,14 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
         reply_to_message_id: replyToMessageId,
-        text: parseFailureText,
+        text: MSG_TZM_PARSE_FAILURE,
         parse_mode: '',
       });
       return new Response('ok');
     }
 
     const assumptionSuffix = parsed.assumptions.length > 0 ? `（假设：${parsed.assumptions.join('；')}）` : '';
-    const confidenceSuffix = parsed.confidence === 'low' ? '（低置信度）' : '';
+    const confidenceSuffix = parsed.confidence === 'low' ? MSG_TZM_LOW_CONFIDENCE : '';
     const header = `解析为：${parsed.isoTimestamp} (${parserTimezone})${assumptionSuffix}${confidenceSuffix}`;
 
     let lines: string[];

@@ -1,3 +1,5 @@
+import { WEBHOOK_MAX_CONNECTIONS } from './config';
+
 const TELEGRAM_WEBHOOK_ALLOWED_UPDATES = [
   'message',
   'callback_query',
@@ -12,7 +14,7 @@ export async function setTelegramWebhook(token: string, request: Request): Promi
   const webhookUrl = `${new URL(request.url).origin}/${token}`;
   const params = new URLSearchParams({
     url: webhookUrl,
-    max_connections: '100',
+    max_connections: String(WEBHOOK_MAX_CONNECTIONS),
     allowed_updates: JSON.stringify(TELEGRAM_WEBHOOK_ALLOWED_UPDATES),
     drop_pending_updates: 'true',
   });

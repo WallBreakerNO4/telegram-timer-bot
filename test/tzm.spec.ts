@@ -1,6 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { AI_MODEL } from '../src/config';
 import { initSchema, markSeen, upsertUserTimezone, type UserProfile } from '../src/db';
 import { formatLocalTime, formatUtcOffset } from '../src/time_format';
 import worker from '../src/index';
@@ -319,14 +320,14 @@ describe('/tzm', () => {
 		const aiCall = aiRun.mock.calls[0];
 		const model = String(aiCall?.[0] ?? '');
 		const aiPayload = (aiCall?.[1] ?? {}) as Record<string, unknown>;
-		expect(model).toBe('@cf/meta/llama-3.1-8b-instruct-fast');
+		expect(model).toBe(AI_MODEL);
 		expect(aiPayload.response_format).toMatchObject({ type: 'json_schema' });
 
 		const messages = aiPayload.messages as Array<{ role: string; content: string }>;
 		expect(messages).toHaveLength(2);
 		expect(messages[0]?.role).toBe('system');
 		expect(typeof messages[0]?.content).toBe('string');
-		expect(messages[0]?.content).toContain('isoTimestamp');
+		expect(messages[0]?.content).toContain('currentTimeUtc');
 		expect(messages[1]?.role).toBe('user');
 		const prompt = JSON.parse(messages[1]?.content ?? '{}') as {
 			expression?: string;

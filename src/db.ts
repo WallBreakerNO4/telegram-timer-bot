@@ -16,9 +16,7 @@ export interface SeenRegisteredUser {
 
 type DbEnv = Pick<Env, "DB">;
 
-export async function initSchema(env: DbEnv): Promise<void> {
-  await env.DB.prepare(
-    `
+const SQL_CREATE_USERS = `
     CREATE TABLE IF NOT EXISTS users (
       user_id TEXT PRIMARY KEY,
       timezone TEXT NOT NULL,
@@ -27,25 +25,58 @@ export async function initSchema(env: DbEnv): Promise<void> {
       last_name TEXT,
       updated_at INTEGER
     )
-    `,
-  ).run();
+    `;
 
-  await env.DB.prepare(
-    `
+const SQL_CREATE_CHAT_USERS = `
     CREATE TABLE IF NOT EXISTS chat_users (
       chat_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
       last_seen_at INTEGER NOT NULL,
       PRIMARY KEY(chat_id, user_id)
     )
-    `,
-  ).run();
+    `;
+
+const SQL_GET_USER_TIMEZONE = "SELECT timezone FROM users WHERE user_id = ?";
+
+const SQL_UPSERT_USER = `
+    INSERT INTO users (user_id, timezone, username, first_name, last_name, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      timezone = excluded.timezone,
+      username = excluded.username,
+      first_name = excluded.first_name,
+      last_name = excluded.last_name,
+      updated_at = excluded.updated_at
+    `;
+
+const SQL_MARK_SEEN = `
+    INSERT INTO chat_users (chat_id, user_id, last_seen_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(chat_id, user_id) DO UPDATE SET
+      last_seen_at = excluded.last_seen_at
+    `;
+
+const SQL_LIST_REGISTERED_SEEN_USERS = `
+    SELECT
+      u.user_id,
+      u.timezone,
+      u.username,
+      u.first_name,
+      u.last_name,
+      cu.last_seen_at
+    FROM chat_users cu
+    INNER JOIN users u ON u.user_id = cu.user_id
+    WHERE cu.chat_id = ?
+    ORDER BY cu.last_seen_at DESC, u.user_id ASC
+    `;
+
+export async function initSchema(env: DbEnv): Promise<void> {
+  await env.DB.prepare(SQL_CREATE_USERS).run();
+  await env.DB.prepare(SQL_CREATE_CHAT_USERS).run();
 }
 
 export async function getUserTimezone(env: DbEnv, userId: string): Promise<string | null> {
-  const row = await env.DB.prepare(
-    "SELECT timezone FROM users WHERE user_id = ?",
-  )
+  const row = await env.DB.prepare(SQL_GET_USER_TIMEZONE)
     .bind(userId)
     .first<{ timezone: string }>();
 
@@ -58,18 +89,7 @@ export async function upsertUserTimezone(
   timezone: string,
   now: number = Date.now(),
 ): Promise<void> {
-  await env.DB.prepare(
-    `
-    INSERT INTO users (user_id, timezone, username, first_name, last_name, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(user_id) DO UPDATE SET
-      timezone = excluded.timezone,
-      username = excluded.username,
-      first_name = excluded.first_name,
-      last_name = excluded.last_name,
-      updated_at = excluded.updated_at
-    `,
-  )
+  await env.DB.prepare(SQL_UPSERT_USER)
     .bind(
       userProfile.userId,
       timezone,
@@ -87,14 +107,7 @@ export async function markSeen(
   userProfile: UserProfile,
   now: number = Date.now(),
 ): Promise<void> {
-  await env.DB.prepare(
-    `
-    INSERT INTO chat_users (chat_id, user_id, last_seen_at)
-    VALUES (?, ?, ?)
-    ON CONFLICT(chat_id, user_id) DO UPDATE SET
-      last_seen_at = excluded.last_seen_at
-    `,
-  )
+  await env.DB.prepare(SQL_MARK_SEEN)
     .bind(chatId, userProfile.userId, now)
     .run();
 }
@@ -103,21 +116,7 @@ export async function listRegisteredSeenUsers(
   env: DbEnv,
   chatId: string,
 ): Promise<SeenRegisteredUser[]> {
-  const result = await env.DB.prepare(
-    `
-    SELECT
-      u.user_id,
-      u.timezone,
-      u.username,
-      u.first_name,
-      u.last_name,
-      cu.last_seen_at
-    FROM chat_users cu
-    INNER JOIN users u ON u.user_id = cu.user_id
-    WHERE cu.chat_id = ?
-    ORDER BY cu.last_seen_at DESC, u.user_id ASC
-    `,
-  )
+  const result = await env.DB.prepare(SQL_LIST_REGISTERED_SEEN_USERS)
     .bind(chatId)
     .all<{
       user_id: string;
