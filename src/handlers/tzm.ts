@@ -2,7 +2,7 @@ import TelegramBot, { type TelegramExecutionContext } from '@codebam/cf-workers-
 
 import { AI_MODEL, AI_TIMEOUT_MS, LOCALE } from '../config';
 import { getUserTimezone, initSchema, listRegisteredSeenUsers, markSeen } from '../db';
-import { MSG_NEED_INIT, MSG_PRIVATE_OR_GROUP_ONLY, MSG_TZM_LOW_CONFIDENCE, MSG_TZM_PARSE_FAILURE, MSG_TZM_SINGLE_POINT_ONLY, MSG_TZM_USAGE } from '../messages';
+import { MSG_NEED_INIT, MSG_PRIVATE_OR_GROUP_ONLY, MSG_TZM_PARSE_FAILURE, MSG_TZM_SINGLE_POINT_ONLY, MSG_TZM_USAGE } from '../messages';
 import { type TelegramApiCompat } from '../telegram_api';
 import { getDisplayName, getUserProfileFromMessageUser } from '../telegram_profiles';
 import { buildTzmMessage } from '../telegram_text';
@@ -11,8 +11,9 @@ import {
   type AiCompat,
   isPeriodicExpression,
   parseTzmAiResponse,
-  type TzmParseResult,
   runWithTimeout,
+  toIsoOffset,
+  type TzmParseResult,
   TZM_SYSTEM_PROMPT,
 } from '../tzm_ai';
 
@@ -22,13 +23,10 @@ const HOUR_CYCLE = 'h23' as const;
 const TZM_JSON_SCHEMA = {
   type: 'object',
   properties: {
-    ok: { type: 'boolean' },
-    isoTimestamp: { type: 'string' },
-    confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
-    assumptions: { type: 'array', items: { type: 'string' } },
-    error: { type: 'string' },
+    timestamp: { type: 'string' },
+    timezone: { type: 'string' },
   },
-  required: ['ok', 'isoTimestamp', 'confidence', 'assumptions', 'error'],
+  required: ['timestamp', 'timezone'],
   additionalProperties: false,
 } as const;
 
@@ -189,8 +187,28 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
 
     const now = new Date();
     const nowIso = now.toISOString();
-    const nowInRequesterTimezone = formatDateTimePartsInTimeZone(parserTimezone, now);
+    const nowInParserTimezone = formatDateTimePartsInTimeZone(parserTimezone, now);
     const nowUtcOffset = formatUtcOffset(parserTimezone, now);
+
+    const userLocalTime =
+      nowInParserTimezone.ok && nowUtcOffset.ok
+        ? `${nowInParserTimezone.value.date}T${nowInParserTimezone.value.time}${toIsoOffset(nowUtcOffset.value)}`
+        : undefined;
+
+    const contextMessages: Array<{ sender: string; text: string; time: string }> = [];
+    const replyMessage = message.reply_to_message;
+    if (replyMessage) {
+      const replySender = getUserProfileFromMessageUser(replyMessage.from);
+      const replyText = getTelegramMessageText(replyMessage);
+      const replyTime = typeof replyMessage.date === 'number' ? new Date(replyMessage.date * 1000).toISOString() : '';
+      if (replySender && replyText) {
+        contextMessages.push({
+          sender: getDisplayName(replySender),
+          text: replyText,
+          time: replyTime,
+        });
+      }
+    }
 
     const ai = (env as Env & { AI?: AiCompat }).AI;
     if (!ai) {
@@ -212,20 +230,21 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
               role: 'system',
               content: TZM_SYSTEM_PROMPT,
             },
-             {
-               role: 'user',
-               content: JSON.stringify({
-                 expression,
-                 requesterTimezone: parserTimezone,
-                 currentTimeUtc: nowIso,
-                 currentDateInRequesterTimezone: nowInRequesterTimezone.ok ? nowInRequesterTimezone.value.date : undefined,
-                 currentTimeInRequesterTimezone: nowInRequesterTimezone.ok
-                   ? `${nowInRequesterTimezone.value.date}T${nowInRequesterTimezone.value.time}`
-                   : undefined,
-                 currentUtcOffsetInRequesterTimezone: nowUtcOffset.ok ? nowUtcOffset.value : undefined,
-               }),
-             },
-           ],
+            {
+              role: 'user',
+              content: JSON.stringify({
+                expression,
+                user: {
+                  name: getDisplayName(requester),
+                  username: requester.username ? `@${requester.username}` : null,
+                  timezone: parserTimezone,
+                  localTime: userLocalTime,
+                },
+                currentTimeUtc: nowIso,
+                context: contextMessages,
+              }),
+            },
+          ],
           response_format: {
             type: 'json_schema',
             json_schema: TZM_JSON_SCHEMA,
@@ -256,7 +275,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
       return new Response('ok');
     }
 
-    if (!parsed.ok) {
+    if (!parsed.timestamp) {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
         reply_to_message_id: replyToMessageId,
@@ -266,7 +285,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
       return new Response('ok');
     }
 
-    const targetDate = new Date(parsed.isoTimestamp);
+    const targetDate = new Date(`${parsed.timestamp}${toIsoOffset(parsed.timezone)}`);
     if (Number.isNaN(targetDate.getTime())) {
       await api.sendMessage(ctx.bot.api.toString(), {
         chat_id: chatId,
@@ -277,9 +296,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
       return new Response('ok');
     }
 
-    const assumptionSuffix = parsed.assumptions.length > 0 ? `（假设：${parsed.assumptions.join('；')}）` : '';
-    const confidenceSuffix = parsed.confidence === 'low' ? MSG_TZM_LOW_CONFIDENCE : '';
-    const header = `解析为：${parsed.isoTimestamp} (${parserTimezone})${assumptionSuffix}${confidenceSuffix}`;
+    const header = `解析为：${parsed.timestamp} (${parsed.timezone})`;
 
     let lines: string[];
     if (isGroupChat) {

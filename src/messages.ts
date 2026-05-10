@@ -8,8 +8,6 @@ export const MSG_PRIVATE_OR_GROUP_ONLY = '仅群聊或私聊可用';
 export const MSG_TZM_USAGE = '用法：/tzm 明天下午五点';
 export const MSG_TZM_SINGLE_POINT_ONLY = '仅支持单次时间点';
 export const MSG_TZM_PARSE_FAILURE = '解析失败：请用更具体的表达，例如：/tzm 明天下午五点';
-export const MSG_TZM_LOW_CONFIDENCE = '（低置信度）';
-
 // callback / 时区设置
 export const MSG_EXPIRED = '消息已过期，请重新 /start';
 export const MSG_INVALID_ACTION = '操作无效，请重新选择';

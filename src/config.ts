@@ -1,5 +1,6 @@
 // AI
-export const AI_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast' as const;
+// export const AI_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast' as const;
+export const AI_MODEL = '@cf/zai-org/glm-4.7-flash' as const;
 export const AI_TIMEOUT_MS = 8000;
 
 // 本地化

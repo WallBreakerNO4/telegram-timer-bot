@@ -162,16 +162,12 @@ describe('/tzm', () => {
 	it('私聊也能解析并返回请求者本地时间', async () => {
 		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Sender' }), 'Asia/Shanghai');
 
-		const targetIso = '2026-02-10T17:00:00+08:00';
-		const targetDate = new Date(targetIso);
+		const targetDate = new Date('2026-02-10T17:00:00+08:00');
 		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
 			async () => ({
 				response: {
-					ok: true,
-					isoTimestamp: targetIso,
-					confidence: 'high',
-					assumptions: [],
-					error: '',
+					timestamp: '2026-02-10T17:00:00',
+					timezone: 'UTC+8',
 				},
 			}),
 		);
@@ -226,11 +222,8 @@ describe('/tzm', () => {
 		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
 			async () => ({
 				response: {
-					ok: true,
-					isoTimestamp: '2026-02-10T17:00:00+08:00',
-					confidence: 'high',
-					assumptions: [],
-					error: '',
+					timestamp: '2026-02-10T17:00:00',
+					timezone: 'UTC+8',
 				},
 			}),
 		);
@@ -264,14 +257,16 @@ describe('/tzm', () => {
 		const messages = aiPayload.messages as Array<{ role: string; content: string }>;
 		const prompt = JSON.parse(messages[1]?.content ?? '{}') as {
 			expression?: string;
-			requesterTimezone?: string;
+			user?: { name?: string; username?: string | null; timezone?: string; localTime?: string };
 			currentTimeUtc?: string;
-			currentDateInRequesterTimezone?: string;
-			currentTimeInRequesterTimezone?: string;
-			currentUtcOffsetInRequesterTimezone?: string;
+			context?: Array<{ sender: string; text: string; time: string }>;
 		};
 		expect(prompt.expression).toBe('明天下午五点我们一起来看比赛');
-		expect(prompt.requesterTimezone).toBe('Asia/Shanghai');
+		expect(prompt.user?.timezone).toBe('Asia/Shanghai');
+		expect(prompt.context).toHaveLength(1);
+		expect(prompt.context?.[0]?.sender).toBe('reply_sender');
+		expect(prompt.context?.[0]?.text).toBe('明天下午五点我们一起来看比赛');
+		expect(typeof prompt.context?.[0]?.time).toBe('string');
 
 		const [input, init] = outboundFetch.mock.calls[0];
 		const replyTo = await readOutboundParam(input, init, 'reply_to_message_id');
@@ -290,17 +285,13 @@ describe('/tzm', () => {
 		await markSeen(env, chatId, createProfile('1001', { username: 'alice_u', firstName: 'Alice', lastName: 'Li' }), 1000);
 		await markSeen(env, chatId, createProfile('1002', { username: 'bob_u' }), 2000);
 
-		const targetIso = '2026-02-10T17:00:00+08:00';
-		const targetDate = new Date(targetIso);
+		const targetDate = new Date('2026-02-10T17:00:00+08:00');
 
 		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
 			async () => ({
 			response: {
-				ok: true,
-				isoTimestamp: targetIso,
-				confidence: 'high',
-				assumptions: [],
-				error: '',
+				timestamp: '2026-02-10T17:00:00',
+				timezone: 'UTC+8',
 			},
 		}),
 		);
@@ -331,17 +322,14 @@ describe('/tzm', () => {
 		expect(messages[1]?.role).toBe('user');
 		const prompt = JSON.parse(messages[1]?.content ?? '{}') as {
 			expression?: string;
-			requesterTimezone?: string;
+			user?: { name?: string; username?: string | null; timezone?: string; localTime?: string };
 			currentTimeUtc?: string;
-			currentDateInRequesterTimezone?: string;
-			currentTimeInRequesterTimezone?: string;
-			currentUtcOffsetInRequesterTimezone?: string;
-			users?: unknown;
+			context?: Array<{ sender: string; text: string; time: string }>;
 		};
 		expect(prompt.expression).toBe('明天下午五点');
-		expect(prompt.requesterTimezone).toBe('Asia/Shanghai');
+		expect(prompt.user?.timezone).toBe('Asia/Shanghai');
 		expect(typeof prompt.currentTimeUtc).toBe('string');
-		expect(prompt.users).toBeUndefined();
+		expect(prompt.context).toEqual([]);
 
 		const [input, init] = outboundFetch.mock.calls[0];
 		const text = await readOutboundParam(input, init, 'text');
@@ -371,11 +359,8 @@ describe('/tzm', () => {
 		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
 			async () => ({
 				response: {
-					ok: true,
-					isoTimestamp: '2026-02-11T11:00:00+08:00',
-					confidence: 'high',
-					assumptions: [],
-					error: '',
+					timestamp: '2026-02-11T11:00:00',
+					timezone: 'UTC+8',
 				},
 			}),
 		);
@@ -397,29 +382,23 @@ describe('/tzm', () => {
 		const messages = aiPayload.messages as Array<{ role: string; content: string }>;
 		const prompt = JSON.parse(messages[1]?.content ?? '{}') as {
 			currentTimeUtc?: string;
-			currentDateInRequesterTimezone?: string;
-			currentTimeInRequesterTimezone?: string;
-			currentUtcOffsetInRequesterTimezone?: string;
+			user?: { name?: string; username?: string | null; timezone?: string; localTime?: string };
 		};
 
 		expect(prompt.currentTimeUtc).toBe('2026-02-09T16:30:00.000Z');
-		expect(prompt.currentDateInRequesterTimezone).toBe('2026-02-10');
-		expect(prompt.currentTimeInRequesterTimezone).toBe('2026-02-10T00:30:00');
-		expect(prompt.currentUtcOffsetInRequesterTimezone).toBe('UTC+8');
+		expect(prompt.user?.timezone).toBe('Asia/Shanghai');
+		expect(prompt.user?.localTime).toBe('2026-02-10T00:30:00+08:00');
 	});
 
-	it('AI 返回 ok=false 时回复稳定错误文案', async () => {
+	it('AI 返回空 timestamp/timezone 时回复稳定错误文案', async () => {
 		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Alice' }), 'Asia/Shanghai');
 		await markSeen(env, '42', createProfile('1001', { firstName: 'Alice' }), 1000);
 
 		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
 			async () => ({
 				response: {
-					ok: false,
-					isoTimestamp: '',
-					confidence: 'low',
-					assumptions: [],
-					error: 'ambiguous',
+					timestamp: '',
+					timezone: '',
 				},
 			}),
 		);
@@ -486,66 +465,6 @@ describe('/tzm', () => {
 		expect(text).toBe('仅支持单次时间点');
 	});
 
-	it('低置信度时在 header 追加低置信度标记', async () => {
-		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Alice' }), 'Asia/Shanghai');
-		await markSeen(env, '42', createProfile('1001', { firstName: 'Alice' }), 1000);
-
-		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
-			async () => ({
-				response: {
-					ok: true,
-					isoTimestamp: '2026-02-10T08:00:00+08:00',
-					confidence: 'low',
-					assumptions: [],
-					error: '',
-				},
-			}),
-		);
-
-		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-			async () => createTelegramOkResponse(),
-		);
-		vi.stubGlobal('fetch', outboundFetch);
-		vi.spyOn(console, 'log').mockImplementation(() => {});
-
-		const response = await runWebhook(createTzmUpdate({ chatType: 'group', messageId: 107, senderId: 1001 }), { run: aiRun });
-		expect(response.status).toBe(200);
-
-		const [input, init] = outboundFetch.mock.calls[0];
-		const text = String((await readOutboundParam(input, init, 'text')) ?? '');
-		expect(text.split('\n')[0]).toContain('（低置信度）');
-	});
-
-	it('header 追加 assumptions（含仅时间与仅日期假设）', async () => {
-		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Alice' }), 'Asia/Shanghai');
-		await markSeen(env, '42', createProfile('1001', { firstName: 'Alice' }), 1000);
-
-		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
-			async () => ({
-				response: {
-					ok: true,
-					isoTimestamp: '2026-02-10T09:00:00+08:00',
-					confidence: 'medium',
-					assumptions: ['仅提供时间，按最近未来一次', '仅提供日期，默认 09:00'],
-					error: '',
-				},
-			}),
-		);
-
-		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-			async () => createTelegramOkResponse(),
-		);
-		vi.stubGlobal('fetch', outboundFetch);
-		vi.spyOn(console, 'log').mockImplementation(() => {});
-
-		const response = await runWebhook(createTzmUpdate({ chatType: 'group', messageId: 108, senderId: 1001 }), { run: aiRun });
-		expect(response.status).toBe(200);
-
-		const [input, init] = outboundFetch.mock.calls[0];
-		const text = String((await readOutboundParam(input, init, 'text')) ?? '');
-		expect(text.split('\n')[0]).toContain('（假设：仅提供时间，按最近未来一次；仅提供日期，默认 09:00）');
-	});
-
 	it('超长消息时保留 header 首行并追加截断尾注，且总长度不超过 4096', async () => {
 		const chatId = '42';
 		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Requester' }), 'Asia/Shanghai');
@@ -565,11 +484,8 @@ describe('/tzm', () => {
 		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
 			async () => ({
 				response: {
-					ok: true,
-					isoTimestamp: '2026-02-10T09:00:00+08:00',
-					confidence: 'medium',
-					assumptions: ['仅提供日期，默认 09:00'],
-					error: '',
+					timestamp: '2026-02-10T09:00:00',
+					timezone: 'UTC+8',
 				},
 			}),
 		);
