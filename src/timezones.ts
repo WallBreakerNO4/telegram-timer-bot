@@ -1,7 +1,5 @@
 import { EXCLUDED_TZ_REGION, LOCALE } from './config';
 
-const FALLBACK_TIMEZONES = ["Etc/UTC"] as const;
-
 export interface TimezonePageOptions {
   page?: number;
   pageSize?: number;
@@ -24,30 +22,28 @@ function sortStable(values: readonly string[]): string[] {
   return [...values].sort((a, b) => a.localeCompare(b, LOCALE));
 }
 
-function normalizePositiveInt(value: number | undefined, fallback: number): number {
+function normalizePositiveInt(value: number | undefined, defaultValue: number): number {
   if (!Number.isInteger(value) || value === undefined || value < 1) {
-    return fallback;
+    return defaultValue;
   }
   return value;
 }
 
 export function getSupportedTimezones(): string[] {
-  try {
-    const intlWithSupportedValues = Intl as Intl.DateTimeFormatOptions & {
-      supportedValuesOf?: (key: string) => string[];
-    };
+  const intlWithSupportedValues = Intl as Intl.DateTimeFormatOptions & {
+    supportedValuesOf?: (key: string) => string[];
+  };
 
-    if (typeof intlWithSupportedValues.supportedValuesOf === "function") {
-      const values = intlWithSupportedValues.supportedValuesOf("timeZone");
-      if (Array.isArray(values) && values.length > 0) {
-        return sortStable(Array.from(new Set(values)));
-      }
-    }
-  } catch {
-    return [...FALLBACK_TIMEZONES];
+  if (typeof intlWithSupportedValues.supportedValuesOf !== "function") {
+    throw new Error('Intl.supportedValuesOf is unavailable');
   }
 
-  return [...FALLBACK_TIMEZONES];
+  const values = intlWithSupportedValues.supportedValuesOf("timeZone");
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error('Intl.supportedValuesOf returned no timezones');
+  }
+
+  return sortStable(Array.from(new Set(values)));
 }
 
 export function getTimezoneRegions(timezones: readonly string[] = getSupportedTimezones()): string[] {

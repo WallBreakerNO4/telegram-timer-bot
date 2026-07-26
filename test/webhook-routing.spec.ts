@@ -4,6 +4,7 @@ import worker from '../src/index';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 const TEST_TOKEN = '123456:test_token';
+const TEST_BOT_USERNAME = 'timer_test_bot';
 
 function createTelegramOkResponse(): Response {
 	return new Response(JSON.stringify({ ok: true, result: true }), {
@@ -38,6 +39,46 @@ afterEach(() => {
 });
 
 describe('Webhook routing', () => {
+	it('propagates malformed JSON errors', async () => {
+		const request = new IncomingRequest(`https://example.com/${TEST_TOKEN}`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: '{not-json',
+		});
+		const ctx = createExecutionContext();
+		await expect(worker.fetch(request, { ...env, SECRET_TELEGRAM_API_TOKEN: TEST_TOKEN }, ctx)).rejects.toThrow();
+	});
+
+	it('returns 400 when the webhook JSON is not an object', async () => {
+		const request = new IncomingRequest(`https://example.com/${TEST_TOKEN}`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(null),
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(
+			request,
+			{ ...env, SECRET_TELEGRAM_API_TOKEN: TEST_TOKEN, TELEGRAM_BOT_USERNAME: TEST_BOT_USERNAME },
+			ctx,
+		);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(400);
+	});
+
+	it('returns 405 for a valid token with an unsupported method', async () => {
+		const request = new IncomingRequest(`https://example.com/${TEST_TOKEN}`, { method: 'PUT' });
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(
+			request,
+			{ ...env, SECRET_TELEGRAM_API_TOKEN: TEST_TOKEN, TELEGRAM_BOT_USERNAME: TEST_BOT_USERNAME },
+			ctx,
+		);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(405);
+	});
+
 	it('handles POST /{token} and triggers Telegram API call', async () => {
 		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
 			async () => createTelegramOkResponse(),
@@ -51,7 +92,11 @@ describe('Webhook routing', () => {
 			body: JSON.stringify(createStartUpdate()),
 		});
 		const ctx = createExecutionContext();
-		const response = await worker.fetch(request, { ...env, SECRET_TELEGRAM_API_TOKEN: TEST_TOKEN }, ctx);
+		const response = await worker.fetch(
+			request,
+			{ ...env, SECRET_TELEGRAM_API_TOKEN: TEST_TOKEN, TELEGRAM_BOT_USERNAME: TEST_BOT_USERNAME },
+			ctx,
+		);
 		await waitOnExecutionContext(ctx);
 
 		expect(response.status).toBe(200);

@@ -4,7 +4,7 @@
 # src
 
 ## Purpose
-应用源码目录，包含 Cloudflare Workers 入口、Telegram Bot 实例装配、D1 数据库层、纯工具函数、Telegram API 兼容封装以及命令/callback 处理器。
+应用源码目录，包含 Cloudflare Workers 入口、Telegram Bot 实例装配、D1 数据库层、纯工具函数、Telegram 消息 helper 以及命令/callback 处理器。
 
 ## Key Files
 
@@ -15,8 +15,6 @@
 | `env.d.ts` | Cloudflare 环境变量类型声明（`SECRET_TELEGRAM_API_TOKEN` 等） |
 | `db.ts` | D1 数据库层：schema 初始化、用户时区 CRUD、群聊"见过"记录 |
 | `callback_data.ts` | Inline Keyboard callback data 的编解码（64 bytes 限制） |
-| `telegram_api.ts` | Telegram API 兼容封装（`answerCallbackQuery` 版本差异、消息编辑 fallback） |
-| `telegram_command.ts` | 从 update 上下文中解析命令（含 username mention 规范化） |
 | `telegram_profiles.ts` | 从 Telegram update 提取用户信息、展示名生成 |
 | `telegram_text.ts` | 文本拼装与截断（受 Telegram 4096 字符限制） |
 | `telegram_webhook.ts` | Telegram webhook 设置逻辑 |
@@ -47,7 +45,7 @@
 - Bot handler 注册模式：`bot.on('command', async (ctx) => { ... })`
 - D1 操作：`env.DB.prepare(sql).bind(...).run()/first()/all()`
 - 时间处理：`Intl.DateTimeFormat` + `formatToParts` 获取各时区时间部分
-- Telegram API 调用通过 `ctx.api as unknown as TelegramApiCompat` 兼容不同库版本
+- Telegram API 调用使用 grammY 的 `ctx.reply`、`ctx.answerCallbackQuery`、`ctx.api` 原生签名
 
 ## Dependencies
 
@@ -55,5 +53,5 @@
 - `handlers/` - 各命令的处理器实现
 
 ### External
-- `@codebam/cf-workers-telegram-bot` - Telegram Bot 框架（提供 `TelegramBot`、`TelegramExecutionContext`）
+- `grammy` - Telegram Bot 框架（提供 `Bot`、`Context`、Cloudflare webhook 适配器）
 - Cloudflare Workers runtime - `Intl.supportedValuesOf`、D1、AI bindings

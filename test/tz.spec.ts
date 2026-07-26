@@ -128,7 +128,7 @@ async function readOutboundParam(
     try {
       const parsed = JSON.parse(requestBodyText) as Record<string, unknown>;
       const value = parsed[key];
-      return value === undefined ? null : String(value);
+      return value === undefined ? null : typeof value === "object" ? JSON.stringify(value) : String(value);
     } catch {
       const form = new URLSearchParams(requestBodyText);
       const value = form.get(key);
@@ -143,13 +143,21 @@ async function readOutboundParam(
     try {
       const parsed = JSON.parse(initBody) as Record<string, unknown>;
       const value = parsed[key];
-      return value === undefined ? null : String(value);
+      return value === undefined ? null : typeof value === "object" ? JSON.stringify(value) : String(value);
     } catch {
       return new URLSearchParams(initBody).get(key);
     }
   }
 
   return null;
+}
+
+async function readReplyMessageId(input: RequestInfo | URL, init: RequestInit | undefined): Promise<string | null> {
+  const raw = await readOutboundParam(input, init, "reply_parameters");
+  if (!raw) return null;
+
+  const replyParameters = JSON.parse(raw) as { message_id?: number };
+  return replyParameters.message_id === undefined ? null : String(replyParameters.message_id);
 }
 
 beforeEach(async () => {
@@ -214,7 +222,7 @@ describe("/tz", () => {
 
     const [input, init] = outboundFetch.mock.calls[0];
     const text = await readOutboundParam(input, init, "text");
-    const replyTo = await readOutboundParam(input, init, "reply_to_message_id");
+    const replyTo = await readReplyMessageId(input, init);
     const now = new Date();
     const expectedTime = formatLocalTime("Asia/Shanghai", now);
     const expectedOffset = formatUtcOffset("Asia/Shanghai", now);
@@ -263,7 +271,7 @@ describe("/tz", () => {
 
     const [input, init] = outboundFetch.mock.calls[0];
     const text = await readOutboundParam(input, init, "text");
-    const replyTo = await readOutboundParam(input, init, "reply_to_message_id");
+    const replyTo = await readReplyMessageId(input, init);
     const now = new Date();
     const expectedTime = formatLocalTime("Europe/London", now);
     const expectedOffset = formatUtcOffset("Europe/London", now);
@@ -301,7 +309,7 @@ describe("/tz", () => {
 
     const [input, init] = outboundFetch.mock.calls[0];
     const text = await readOutboundParam(input, init, "text");
-    const replyTo = await readOutboundParam(input, init, "reply_to_message_id");
+    const replyTo = await readReplyMessageId(input, init);
 
     expect(text).toBe("请私聊 bot 用 /start 初始化");
     expect(replyTo).toBe("301");

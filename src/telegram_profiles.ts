@@ -1,4 +1,4 @@
-import { type TelegramExecutionContext } from '@codebam/cf-workers-telegram-bot';
+import { type Context } from 'grammy';
 
 import { type UserProfile } from './db';
 
@@ -16,8 +16,8 @@ export type DisplayNameSource = {
   lastName?: string | null;
 };
 
-export function getUserProfileFromCallback(ctx: TelegramExecutionContext): UserProfile | null {
-  const from = ctx.update.callback_query?.from;
+export function getUserProfileFromCallback(ctx: Context): UserProfile | null {
+  const from = ctx.callbackQuery?.from;
   if (!from?.id) {
     return null;
   }

@@ -1,28 +1,23 @@
-import TelegramBot, { type TelegramExecutionContext } from '@codebam/cf-workers-telegram-bot';
+import { type Bot, type Context } from 'grammy';
 
 import { initSchema, listRegisteredSeenUsers } from '../db';
 import { MSG_GROUP_ONLY } from '../messages';
-import { type TelegramApiCompat } from '../telegram_api';
 import { getDisplayName } from '../telegram_profiles';
 import { buildTzaMessage } from '../telegram_text';
 import { formatLocalTime, formatUtcOffset } from '../time_format';
 
-export function registerTzaHandler(bot: TelegramBot, env: Env): void {
-  bot.on('tza', async (ctx: TelegramExecutionContext) => {
-    const message = ctx.update.message;
+export function registerTzaHandler(bot: Bot, env: Env): void {
+  bot.command('tza', async (ctx: Context) => {
+    const message = ctx.message;
     if (!message?.chat?.id) {
       return new Response('ok');
     }
 
     const chatId = String(message.chat.id);
-    const api = ctx.api as unknown as TelegramApiCompat;
 
     if (message.chat.type !== 'group' && message.chat.type !== 'supergroup') {
-      await api.sendMessage(ctx.bot.api.toString(), {
-        chat_id: chatId,
-        reply_to_message_id: message.message_id,
-        text: MSG_GROUP_ONLY,
-        parse_mode: '',
+      await ctx.reply(MSG_GROUP_ONLY, {
+        reply_parameters: { message_id: message.message_id },
       });
       return new Response('ok');
     }
@@ -44,11 +39,8 @@ export function registerTzaHandler(bot: TelegramBot, env: Env): void {
     });
     const text = buildTzaMessage(lines);
 
-    await api.sendMessage(ctx.bot.api.toString(), {
-      chat_id: chatId,
-      reply_to_message_id: message.message_id,
-      text,
-      parse_mode: '',
+    await ctx.reply(text, {
+      reply_parameters: { message_id: message.message_id },
     });
 
     return new Response('ok');

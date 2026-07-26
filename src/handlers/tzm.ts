@@ -1,9 +1,8 @@
-import TelegramBot, { type TelegramExecutionContext } from '@codebam/cf-workers-telegram-bot';
+import { type Bot, type Context } from 'grammy';
 
 import { AI_MODEL, AI_TIMEOUT_MS, LOCALE } from '../config';
 import { getUserTimezone, initSchema, listRegisteredSeenUsers, markSeen } from '../db';
-import { MSG_NEED_INIT, MSG_PRIVATE_OR_GROUP_ONLY, MSG_TZM_PARSE_FAILURE, MSG_TZM_SINGLE_POINT_ONLY, MSG_TZM_USAGE } from '../messages';
-import { type TelegramApiCompat } from '../telegram_api';
+import { MSG_NEED_INIT, MSG_PRIVATE_OR_GROUP_ONLY, MSG_TZM_SINGLE_POINT_ONLY, MSG_TZM_USAGE } from '../messages';
 import { getDisplayName, getUserProfileFromMessageUser } from '../telegram_profiles';
 import { buildTzmMessage } from '../telegram_text';
 import { formatLocalTime, formatUtcOffset } from '../time_format';
@@ -13,7 +12,6 @@ import {
   parseTzmAiResponse,
   runWithTimeout,
   toIsoOffset,
-  type TzmParseResult,
   TZM_SYSTEM_PROMPT,
 } from '../tzm_ai';
 
@@ -64,63 +62,56 @@ function getTelegramMessageText(message: unknown): string {
 
 type DateTimeParts = { date: string; time: string };
 
-function formatDateTimePartsInTimeZone(timeZone: string, date: Date): { ok: true; value: DateTimeParts } | { ok: false } {
-  try {
-    const formatter = new Intl.DateTimeFormat(LOCALE, {
-      timeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hourCycle: HOUR_CYCLE,
-    });
+function formatDateTimePartsInTimeZone(timeZone: string, date: Date): DateTimeParts {
+  const formatter = new Intl.DateTimeFormat(LOCALE, {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: HOUR_CYCLE,
+  });
 
-    const parts = formatter.formatToParts(date);
-    const year = parts.find((item) => item.type === 'year')?.value;
-    const month = parts.find((item) => item.type === 'month')?.value;
-    const day = parts.find((item) => item.type === 'day')?.value;
-    const hour = parts.find((item) => item.type === 'hour')?.value;
-    const minute = parts.find((item) => item.type === 'minute')?.value;
-    const second = parts.find((item) => item.type === 'second')?.value;
+  const parts = formatter.formatToParts(date);
+  const year = parts.find((item) => item.type === 'year')?.value;
+  const month = parts.find((item) => item.type === 'month')?.value;
+  const day = parts.find((item) => item.type === 'day')?.value;
+  const hour = parts.find((item) => item.type === 'hour')?.value;
+  const minute = parts.find((item) => item.type === 'minute')?.value;
+  const second = parts.find((item) => item.type === 'second')?.value;
 
-    if (!year || !month || !day || !hour || !minute || !second) {
-      return { ok: false };
-    }
-
-    return {
-      ok: true,
-      value: {
-        date: `${year}-${month}-${day}`,
-        time: `${hour}:${minute}:${second}`,
-      },
-    };
-  } catch {
-    return { ok: false };
+  if (!year || !month || !day || !hour || !minute || !second) {
+    throw new Error(`Unable to format current time in timezone ${timeZone}`);
   }
+
+  return {
+    date: `${year}-${month}-${day}`,
+    time: `${hour}:${minute}:${second}`,
+  };
 }
 
-export function registerTzmHandler(bot: TelegramBot, env: Env): void {
-  bot.on('tzm', async (ctx: TelegramExecutionContext) => {
-    const message = ctx.update.message;
+export function registerTzmHandler(bot: Bot, env: Env): void {
+  bot.command('tzm', async (ctx: Context) => {
+    const message = ctx.message;
     if (!message?.chat?.id) {
       return new Response('ok');
     }
 
     const chatId = String(message.chat.id);
-    const api = ctx.api as unknown as TelegramApiCompat;
     const chatType = message.chat.type;
     const isGroupChat = chatType === 'group' || chatType === 'supergroup';
     const isPrivateChat = chatType === 'private';
     const replyToMessageId = message.reply_to_message?.message_id ?? message.message_id;
-    if (!isGroupChat && !isPrivateChat) {
-      await api.sendMessage(ctx.bot.api.toString(), {
-        chat_id: chatId,
-        reply_to_message_id: replyToMessageId,
-        text: MSG_PRIVATE_OR_GROUP_ONLY,
-        parse_mode: '',
+    const reply = async (text: string): Promise<void> => {
+      await ctx.reply(text, {
+        reply_parameters: { message_id: replyToMessageId },
       });
+    };
+
+    if (!isGroupChat && !isPrivateChat) {
+      await reply(MSG_PRIVATE_OR_GROUP_ONLY);
       return new Response('ok');
     }
 
@@ -128,22 +119,12 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
     const repliedExpression = getTelegramMessageText(message.reply_to_message).trim();
     const expression = commandExpression || repliedExpression;
     if (!expression) {
-      await api.sendMessage(ctx.bot.api.toString(), {
-        chat_id: chatId,
-        reply_to_message_id: replyToMessageId,
-        text: MSG_TZM_USAGE,
-        parse_mode: '',
-      });
+      await reply(MSG_TZM_USAGE);
       return new Response('ok');
     }
 
     if (isPeriodicExpression(expression)) {
-      await api.sendMessage(ctx.bot.api.toString(), {
-        chat_id: chatId,
-        reply_to_message_id: replyToMessageId,
-        text: MSG_TZM_SINGLE_POINT_ONLY,
-        parse_mode: '',
-      });
+      await reply(MSG_TZM_SINGLE_POINT_ONLY);
       return new Response('ok');
     }
 
@@ -156,12 +137,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
 
     const requesterTimezone = await getUserTimezone(env, requester.userId);
     if (!requesterTimezone) {
-      await api.sendMessage(ctx.bot.api.toString(), {
-        chat_id: chatId,
-        reply_to_message_id: replyToMessageId,
-        text: MSG_NEED_INIT,
-        parse_mode: '',
-      });
+      await reply(MSG_NEED_INIT);
       return new Response('ok');
     }
 
@@ -189,11 +165,11 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
     const nowIso = now.toISOString();
     const nowInParserTimezone = formatDateTimePartsInTimeZone(parserTimezone, now);
     const nowUtcOffset = formatUtcOffset(parserTimezone, now);
+    if (!nowUtcOffset.ok) {
+      throw new Error(nowUtcOffset.error);
+    }
 
-    const userLocalTime =
-      nowInParserTimezone.ok && nowUtcOffset.ok
-        ? `${nowInParserTimezone.value.date}T${nowInParserTimezone.value.time}${toIsoOffset(nowUtcOffset.value)}`
-        : undefined;
+    const userLocalTime = `${nowInParserTimezone.date}T${nowInParserTimezone.time}${toIsoOffset(nowUtcOffset.value)}`;
 
     const contextMessages: Array<{ sender: string; text: string; time: string }> = [];
     const replyMessage = message.reply_to_message;
@@ -212,88 +188,52 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
 
     const ai = (env as Env & { AI?: AiCompat }).AI;
     if (!ai) {
-      await api.sendMessage(ctx.bot.api.toString(), {
-        chat_id: chatId,
-        reply_to_message_id: replyToMessageId,
-        text: MSG_TZM_PARSE_FAILURE,
-        parse_mode: '',
-      });
-      return new Response('ok');
+      throw new Error('Missing Cloudflare AI binding');
     }
 
-    let parsed: TzmParseResult;
-    try {
-      const aiResult = await runWithTimeout(
-        ai.run(AI_MODEL, {
-          messages: [
-            {
-              role: 'system',
-              content: TZM_SYSTEM_PROMPT,
-            },
-            {
-              role: 'user',
-              content: JSON.stringify({
-                expression,
-                user: {
-                  name: getDisplayName(requester),
-                  username: requester.username ? `@${requester.username}` : null,
-                  timezone: parserTimezone,
-                  localTime: userLocalTime,
-                },
-                currentTimeUtc: nowIso,
-                context: contextMessages,
-              }),
-            },
-          ],
-          response_format: {
-            type: 'json_schema',
-            json_schema: TZM_JSON_SCHEMA,
+    const aiResult = await runWithTimeout(
+      ai.run(AI_MODEL, {
+        messages: [
+          {
+            role: 'system',
+            content: TZM_SYSTEM_PROMPT,
           },
-        }),
-        AI_TIMEOUT_MS,
-      );
+          {
+            role: 'user',
+            content: JSON.stringify({
+              expression,
+              user: {
+                name: getDisplayName(requester),
+                username: requester.username ? `@${requester.username}` : null,
+                timezone: parserTimezone,
+                localTime: userLocalTime,
+              },
+              currentTimeUtc: nowIso,
+              context: contextMessages,
+            }),
+          },
+        ],
+        response_format: {
+          type: 'json_schema',
+          json_schema: TZM_JSON_SCHEMA,
+        },
+      }),
+      AI_TIMEOUT_MS,
+    );
 
-      const parsedResult = parseTzmAiResponse(aiResult);
-      if (!parsedResult.ok) {
-        await api.sendMessage(ctx.bot.api.toString(), {
-          chat_id: chatId,
-          reply_to_message_id: replyToMessageId,
-          text: MSG_TZM_PARSE_FAILURE,
-          parse_mode: '',
-        });
-        return new Response('ok');
-      }
-
-      parsed = parsedResult.value;
-    } catch {
-      await api.sendMessage(ctx.bot.api.toString(), {
-        chat_id: chatId,
-        reply_to_message_id: replyToMessageId,
-        text: MSG_TZM_PARSE_FAILURE,
-        parse_mode: '',
-      });
-      return new Response('ok');
+    const parsedResult = parseTzmAiResponse(aiResult);
+    if (!parsedResult.ok) {
+      throw new Error('Invalid time parse response from Cloudflare AI');
     }
+    const parsed = parsedResult.value;
 
     if (!parsed.timestamp) {
-      await api.sendMessage(ctx.bot.api.toString(), {
-        chat_id: chatId,
-        reply_to_message_id: replyToMessageId,
-        text: MSG_TZM_PARSE_FAILURE,
-        parse_mode: '',
-      });
-      return new Response('ok');
+      throw new Error('Cloudflare AI could not resolve the expression to a single timestamp');
     }
 
     const targetDate = new Date(`${parsed.timestamp}${toIsoOffset(parsed.timezone)}`);
     if (Number.isNaN(targetDate.getTime())) {
-      await api.sendMessage(ctx.bot.api.toString(), {
-        chat_id: chatId,
-        reply_to_message_id: replyToMessageId,
-        text: MSG_TZM_PARSE_FAILURE,
-        parse_mode: '',
-      });
-      return new Response('ok');
+      throw new Error(`Cloudflare AI returned an invalid timestamp: ${parsed.timestamp}`);
     }
 
     const header = `解析为：${parsed.timestamp} (${parsed.timezone})`;
@@ -329,12 +269,7 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
 
     const text = buildTzmMessage(header, lines);
 
-    await api.sendMessage(ctx.bot.api.toString(), {
-      chat_id: chatId,
-      reply_to_message_id: replyToMessageId,
-      text,
-      parse_mode: '',
-    });
+    await reply(text);
 
     return new Response('ok');
   });

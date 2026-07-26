@@ -13,7 +13,7 @@ import {
 } from "../src/timezones";
 
 describe("timezones", () => {
-  it("falls back to Etc/UTC when Intl.supportedValuesOf is unavailable", () => {
+  it("throws when Intl.supportedValuesOf is unavailable", () => {
     const descriptor = Object.getOwnPropertyDescriptor(Intl, "supportedValuesOf");
 
     Object.defineProperty(Intl, "supportedValuesOf", {
@@ -23,7 +23,7 @@ describe("timezones", () => {
     });
 
     try {
-      expect(getSupportedTimezones()).toEqual(["Etc/UTC"]);
+      expect(() => getSupportedTimezones()).toThrow('Intl.supportedValuesOf is unavailable');
     } finally {
       if (descriptor) {
         Object.defineProperty(Intl, "supportedValuesOf", descriptor);

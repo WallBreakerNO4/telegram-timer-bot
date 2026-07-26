@@ -51,7 +51,7 @@ Cloudflare Workers 上的 Telegram Bot，提供跨时区时间查询与自然语
 - `src/bot.ts` - Bot 实例装配
 
 ### External
-- `@codebam/cf-workers-telegram-bot` ^9.x - Telegram Bot 框架
+- `grammy` ^1.x - Telegram Bot 框架
 - `wrangler` ^4.x - Cloudflare Workers CLI
 - `vitest` ~3.2.x - 测试框架
 - `@cloudflare/vitest-pool-workers` ^0.12.x - Workers 测试适配
@@ -135,7 +135,6 @@ Workers pool：
 - 纯工具：`src/time_format.ts`、`src/timezones.ts`
 - callback 编解码：`src/callback_data.ts`
 - Inline Keyboard 视图：`src/handlers/timezone_keyboard.ts`
-- Telegram API 兼容封装：`src/telegram_api.ts`（不同版本 API 命名差异）
 - 文本拼装与截断：`src/telegram_text.ts`（受 Telegram 4096 限制）
 
 ### import
@@ -155,9 +154,8 @@ Workers pool：
 
 ### 错误处理
 - 校验/解析类错误：返回结构化错误（code/message）而不是随意 throw
-- 只有真正异常才 throw；在边界 catch 并转成用户可理解的提示（例如 Telegram callback 流）
-- 不要吞错：catch 后要么返回安全值、要么映射为结构化错误、要么给用户反馈
-- 允许在用户交互边界做"兜底吞错"（比如 callback 流只提示重试），但不要悄悄失败；必要时在边界 `console.error`
+- 真正异常直接 throw，保留原始错误类型、消息和调用栈
+- 不在边界吞错或发起二次请求尝试补救
 
 ### 异步与副作用
 - 以 `async/await` 为主；handler 统一返回 `Promise<Response>`

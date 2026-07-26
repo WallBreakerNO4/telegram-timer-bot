@@ -1,14 +1,13 @@
-import TelegramBot, { type TelegramExecutionContext } from '@codebam/cf-workers-telegram-bot';
+import { type Bot, type Context } from 'grammy';
 
 import { getUserTimezone, initSchema, markSeen } from '../db';
 import { MSG_NEED_INIT } from '../messages';
-import { type TelegramApiCompat } from '../telegram_api';
 import { getDisplayName, getUserProfileFromMessageUser } from '../telegram_profiles';
 import { formatLocalTime, formatUtcOffset } from '../time_format';
 
-export function registerTzHandler(bot: TelegramBot, env: Env): void {
-  bot.on('tz', async (ctx: TelegramExecutionContext) => {
-    const message = ctx.update.message;
+export function registerTzHandler(bot: Bot, env: Env): void {
+  bot.command('tz', async (ctx: Context) => {
+    const message = ctx.message;
     if (!message?.chat?.id || !message?.from?.id) {
       return new Response('ok');
     }
@@ -49,11 +48,8 @@ export function registerTzHandler(bot: TelegramBot, env: Env): void {
         })()
       : MSG_NEED_INIT;
 
-    await (ctx.api as unknown as TelegramApiCompat).sendMessage(ctx.bot.api.toString(), {
-      chat_id: chatId,
-      reply_to_message_id: replyToMessageId,
-      text,
-      parse_mode: '',
+    await ctx.reply(text, {
+      reply_parameters: { message_id: replyToMessageId },
     });
 
     return new Response('ok');

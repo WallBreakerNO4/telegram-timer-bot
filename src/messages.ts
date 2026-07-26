@@ -7,7 +7,6 @@ export const MSG_PRIVATE_OR_GROUP_ONLY = '仅群聊或私聊可用';
 // /tzm 相关
 export const MSG_TZM_USAGE = '用法：/tzm 明天下午五点';
 export const MSG_TZM_SINGLE_POINT_ONLY = '仅支持单次时间点';
-export const MSG_TZM_PARSE_FAILURE = '解析失败：请用更具体的表达，例如：/tzm 明天下午五点';
 // callback / 时区设置
 export const MSG_EXPIRED = '消息已过期，请重新 /start';
 export const MSG_INVALID_ACTION = '操作无效，请重新选择';
@@ -15,7 +14,6 @@ export const MSG_CHOOSE_REGION = '请选择区域';
 export const MSG_USER_MISSING = '用户信息缺失，请重试';
 export const MSG_TIMEZONE_SET_DONE = '时区设置完成：{tz}';
 export const MSG_TIMEZONE_SAVED = '时区已保存';
-export const MSG_RETRY_LATER = '处理失败，请稍后重试';
 
 // 时区键盘按钮
 export const MSG_PREV_PAGE = '上一页';

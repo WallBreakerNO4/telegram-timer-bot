@@ -119,7 +119,7 @@ async function readOutboundParam(
 		try {
 			const parsed = JSON.parse(requestBodyText) as Record<string, unknown>;
 			const value = parsed[key];
-			return value === undefined ? null : String(value);
+			return value === undefined ? null : typeof value === 'object' ? JSON.stringify(value) : String(value);
 		} catch {
 			const form = new URLSearchParams(requestBodyText);
 			const value = form.get(key);
@@ -134,13 +134,21 @@ async function readOutboundParam(
 		try {
 			const parsed = JSON.parse(initBody) as Record<string, unknown>;
 			const value = parsed[key];
-			return value === undefined ? null : String(value);
+			return value === undefined ? null : typeof value === 'object' ? JSON.stringify(value) : String(value);
 		} catch {
 			return new URLSearchParams(initBody).get(key);
 		}
 	}
 
 	return null;
+}
+
+async function readReplyMessageId(input: RequestInfo | URL, init: RequestInit | undefined): Promise<string | null> {
+	const raw = await readOutboundParam(input, init, 'reply_parameters');
+	if (!raw) return null;
+
+	const replyParameters = JSON.parse(raw) as { message_id?: number };
+	return replyParameters.message_id === undefined ? null : String(replyParameters.message_id);
 }
 
 beforeEach(async () => {
@@ -185,7 +193,7 @@ describe('/tzm', () => {
 
 		const [input, init] = outboundFetch.mock.calls[0];
 		const text = await readOutboundParam(input, init, 'text');
-		const replyTo = await readOutboundParam(input, init, 'reply_to_message_id');
+		const replyTo = await readReplyMessageId(input, init);
 		expect(text).not.toBeNull();
 		const lines = String(text ?? '').split('\n');
 		expect(lines[0]).toMatch(/^解析为：/);
@@ -210,7 +218,7 @@ describe('/tzm', () => {
 
 		const [input, init] = outboundFetch.mock.calls[0];
 		const text = await readOutboundParam(input, init, 'text');
-		const replyTo = await readOutboundParam(input, init, 'reply_to_message_id');
+		const replyTo = await readReplyMessageId(input, init);
 		expect(text).toBe('请私聊 bot 用 /start 初始化');
 		expect(replyTo).toBe('102');
 	});
@@ -269,7 +277,7 @@ describe('/tzm', () => {
 		expect(typeof prompt.context?.[0]?.time).toBe('string');
 
 		const [input, init] = outboundFetch.mock.calls[0];
-		const replyTo = await readOutboundParam(input, init, 'reply_to_message_id');
+		const replyTo = await readReplyMessageId(input, init);
 		expect(replyTo).toBe('110');
 	});
 
@@ -390,7 +398,7 @@ describe('/tzm', () => {
 		expect(prompt.user?.localTime).toBe('2026-02-10T00:30:00+08:00');
 	});
 
-	it('AI 返回空 timestamp/timezone 时回复稳定错误文案', async () => {
+	it('AI 返回空 timestamp/timezone 时直接抛错', async () => {
 		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Alice' }), 'Asia/Shanghai');
 		await markSeen(env, '42', createProfile('1001', { firstName: 'Alice' }), 1000);
 
@@ -409,18 +417,13 @@ describe('/tzm', () => {
 		vi.stubGlobal('fetch', outboundFetch);
 		vi.spyOn(console, 'log').mockImplementation(() => {});
 
-		const response = await runWebhook(createTzmUpdate({ chatType: 'group', messageId: 104, senderId: 1001 }), { run: aiRun });
-		expect(response.status).toBe(200);
-		expect(outboundFetch).toHaveBeenCalledTimes(1);
-
-		const [input, init] = outboundFetch.mock.calls[0];
-		const text = await readOutboundParam(input, init, 'text');
-		const replyTo = await readOutboundParam(input, init, 'reply_to_message_id');
-		expect(text).toBe('解析失败：请用更具体的表达，例如：/tzm 明天下午五点');
-		expect(replyTo).toBe('104');
+		await expect(runWebhook(createTzmUpdate({ chatType: 'group', messageId: 104, senderId: 1001 }), { run: aiRun })).rejects.toThrow(
+			'Cloudflare AI could not resolve the expression to a single timestamp',
+		);
+		expect(outboundFetch).not.toHaveBeenCalled();
 	});
 
-	it('AI 抛错时回复稳定错误文案', async () => {
+	it('AI 抛错时保留原始错误', async () => {
 		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Alice' }), 'Asia/Shanghai');
 		await markSeen(env, '42', createProfile('1001', { firstName: 'Alice' }), 1000);
 
@@ -436,15 +439,10 @@ describe('/tzm', () => {
 		vi.stubGlobal('fetch', outboundFetch);
 		vi.spyOn(console, 'log').mockImplementation(() => {});
 
-		const response = await runWebhook(createTzmUpdate({ chatType: 'group', messageId: 105, senderId: 1001 }), { run: aiRun });
-		expect(response.status).toBe(200);
-		expect(outboundFetch).toHaveBeenCalledTimes(1);
-
-		const [input, init] = outboundFetch.mock.calls[0];
-		const text = await readOutboundParam(input, init, 'text');
-		const replyTo = await readOutboundParam(input, init, 'reply_to_message_id');
-		expect(text).toBe('解析失败：请用更具体的表达，例如：/tzm 明天下午五点');
-		expect(replyTo).toBe('105');
+		await expect(runWebhook(createTzmUpdate({ chatType: 'group', messageId: 105, senderId: 1001 }), { run: aiRun })).rejects.toThrow(
+			"JSON Mode couldn't be met",
+		);
+		expect(outboundFetch).not.toHaveBeenCalled();
 	});
 
 	it('周期表达直接提示仅支持单次时间点', async () => {

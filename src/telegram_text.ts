@@ -74,11 +74,11 @@ export function buildTzmMessage(header: string, lines: string[]): string {
     }
   }
 
-  const fallbackSuffix = MSG_TRUNCATED;
-  const fallbackWithSuffixMaxHeaderLength = TELEGRAM_MESSAGE_MAX_LENGTH - 1 - fallbackSuffix.length;
-  if (fallbackWithSuffixMaxHeaderLength > 0) {
-    const truncatedHeader = truncateHeaderPreservingPrefix(normalizedHeader, fallbackWithSuffixMaxHeaderLength);
-    return `${truncatedHeader}\n${fallbackSuffix}`;
+  const truncationSuffix = MSG_TRUNCATED;
+  const maxHeaderLengthWithSuffix = TELEGRAM_MESSAGE_MAX_LENGTH - 1 - truncationSuffix.length;
+  if (maxHeaderLengthWithSuffix > 0) {
+    const truncatedHeader = truncateHeaderPreservingPrefix(normalizedHeader, maxHeaderLengthWithSuffix);
+    return `${truncatedHeader}\n${truncationSuffix}`;
   }
 
   return truncateHeaderPreservingPrefix(normalizedHeader, TELEGRAM_MESSAGE_MAX_LENGTH);

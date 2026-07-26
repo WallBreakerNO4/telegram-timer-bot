@@ -1,4 +1,5 @@
-import TelegramBot, { type TelegramExecutionContext } from '@codebam/cf-workers-telegram-bot';
+import { Bot, webhookCallback } from 'grammy';
+import { type UserFromGetMe } from 'grammy/types';
 
 import { registerCallbackHandler } from './handlers/callback';
 import { registerStartHandlers } from './handlers/start';
@@ -7,13 +8,34 @@ import { registerTzaHandler } from './handlers/tza';
 import { registerTzmHandler } from './handlers/tzm';
 import { getSupportedTimezones } from './timezones';
 
-type TelegramHandler = (ctx: TelegramExecutionContext) => Promise<Response>;
+const supportedTimezones = getSupportedTimezones();
 
-const placeholderHandler: TelegramHandler = async () => new Response('ok');
+function getConfiguredBotInfo(token: string, username: string | undefined): UserFromGetMe {
+  const botId = Number(token.slice(0, token.indexOf(':')));
+  if (!username || !Number.isSafeInteger(botId) || botId <= 0) {
+    throw new Error('TELEGRAM_BOT_USERNAME or Telegram bot token is invalid');
+  }
 
-export function createBot(token: string, env: Env): TelegramBot {
-  const bot = new TelegramBot(token);
-  const supportedTimezones = getSupportedTimezones();
+  return {
+    id: botId,
+    is_bot: true,
+    first_name: username,
+    username,
+    can_join_groups: true,
+    can_read_all_group_messages: false,
+    supports_inline_queries: false,
+    can_connect_to_business: false,
+    has_main_web_app: false,
+    has_topics_enabled: false,
+    allows_users_to_create_topics: false,
+    can_manage_bots: false,
+    supports_join_request_queries: false,
+  };
+}
+
+export function createBot(token: string, env: Env): Bot {
+  const botInfo = getConfiguredBotInfo(token, env.TELEGRAM_BOT_USERNAME);
+  const bot = new Bot(token, { botInfo });
 
   registerStartHandlers(bot, supportedTimezones);
   registerTzHandler(bot, env);
@@ -21,7 +43,9 @@ export function createBot(token: string, env: Env): TelegramBot {
   registerTzmHandler(bot, env);
   registerCallbackHandler(bot, env, supportedTimezones);
 
-  bot.on(':message', placeholderHandler);
-
   return bot;
+}
+
+export function getWebhookHandler(token: string, env: Env): (request: Request) => Promise<Response> {
+  return webhookCallback(createBot(token, env), 'cloudflare-mod');
 }
