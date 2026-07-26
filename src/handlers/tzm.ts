@@ -1,6 +1,6 @@
 import TelegramBot, { type TelegramExecutionContext } from '@codebam/cf-workers-telegram-bot';
 
-import { AI_MODEL, AI_TIMEOUT_MS, LOCALE } from '../config';
+import { AI_TIMEOUT_MS, LOCALE, OPENAI_DEFAULT_BASE_URL, OPENAI_MODEL } from '../config';
 import { getUserTimezone, initSchema, listRegisteredSeenUsers, markSeen } from '../db';
 import { MSG_NEED_INIT, MSG_PRIVATE_OR_GROUP_ONLY, MSG_TZM_PARSE_FAILURE, MSG_TZM_SINGLE_POINT_ONLY, MSG_TZM_USAGE } from '../messages';
 import { type TelegramApiCompat } from '../telegram_api';
@@ -8,10 +8,8 @@ import { getDisplayName, getUserProfileFromMessageUser } from '../telegram_profi
 import { buildTzmMessage } from '../telegram_text';
 import { formatLocalTime, formatUtcOffset } from '../time_format';
 import {
-  type AiCompat,
   isPeriodicExpression,
   parseTzmAiResponse,
-  runWithTimeout,
   toIsoOffset,
   type TzmParseResult,
   TZM_SYSTEM_PROMPT,
@@ -19,16 +17,6 @@ import {
 
 const SPLIT_REGEX = /\s+/u;
 const HOUR_CYCLE = 'h23' as const;
-
-const TZM_JSON_SCHEMA = {
-  type: 'object',
-  properties: {
-    timestamp: { type: 'string' },
-    timezone: { type: 'string' },
-  },
-  required: ['timestamp', 'timezone'],
-  additionalProperties: false,
-} as const;
 
 function parseCommandExpression(text: string | undefined): string {
   if (!text) {
@@ -210,49 +198,50 @@ export function registerTzmHandler(bot: TelegramBot, env: Env): void {
       }
     }
 
-    const ai = (env as Env & { AI?: AiCompat }).AI;
-    if (!ai) {
-      await api.sendMessage(ctx.bot.api.toString(), {
-        chat_id: chatId,
-        reply_to_message_id: replyToMessageId,
-        text: MSG_TZM_PARSE_FAILURE,
-        parse_mode: '',
-      });
-      return new Response('ok');
-    }
+    const baseUrl = env.OPENAI_BASE_URL || OPENAI_DEFAULT_BASE_URL;
+    const userPrompt = JSON.stringify({
+      expression,
+      user: {
+        name: getDisplayName(requester),
+        username: requester.username ? `@${requester.username}` : null,
+        timezone: parserTimezone,
+        localTime: userLocalTime,
+      },
+      currentTimeUtc: nowIso,
+      context: contextMessages,
+    });
 
     let parsed: TzmParseResult;
     try {
-      const aiResult = await runWithTimeout(
-        ai.run(AI_MODEL, {
+      const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: OPENAI_MODEL,
           messages: [
-            {
-              role: 'system',
-              content: TZM_SYSTEM_PROMPT,
-            },
-            {
-              role: 'user',
-              content: JSON.stringify({
-                expression,
-                user: {
-                  name: getDisplayName(requester),
-                  username: requester.username ? `@${requester.username}` : null,
-                  timezone: parserTimezone,
-                  localTime: userLocalTime,
-                },
-                currentTimeUtc: nowIso,
-                context: contextMessages,
-              }),
-            },
+            { role: 'system', content: TZM_SYSTEM_PROMPT },
+            { role: 'user', content: userPrompt },
           ],
-          response_format: {
-            type: 'json_schema',
-            json_schema: TZM_JSON_SCHEMA,
-          },
+          response_format: { type: 'json_object' },
+          temperature: 0,
         }),
-        AI_TIMEOUT_MS,
-      );
+        signal: AbortSignal.timeout(AI_TIMEOUT_MS),
+      });
 
+      if (!response.ok) {
+        await api.sendMessage(ctx.bot.api.toString(), {
+          chat_id: chatId,
+          reply_to_message_id: replyToMessageId,
+          text: MSG_TZM_PARSE_FAILURE,
+          parse_mode: '',
+        });
+        return new Response('ok');
+      }
+
+      const aiResult = await response.json();
       const parsedResult = parseTzmAiResponse(aiResult);
       if (!parsedResult.ok) {
         await api.sendMessage(ctx.bot.api.toString(), {

@@ -4,7 +4,7 @@ export const TZM_SYSTEM_PROMPT = [
 	'',
 	'【expression】',
 	'用户输入的自然语言时间表达，这是你需要解析的核心内容。',
-	'例如："明天下午五点"、"下周三上午10点"、"3小时后"、"日本时间明早8点"。',
+	'例如："明晚九点"、"明早七点"、"今晚八点半"、"明天下午五点"、"下周三上午10点"、"3小时后"、"日本时间明早8点"。',
 	'',
 	'【user】',
 	'发送 /tzm 命令的用户信息，包含以下子字段：',
@@ -27,6 +27,17 @@ export const TZM_SYSTEM_PROMPT = [
 	'当 expression 信息不完整时，可以从 context 中的对话内容推断缺失的信息。',
 	'例如：对方说"下午三点见"，expression 为"好的"，则解析目标为当天下午三点。',
 	'',
+	'【中文时间词映射】',
+	'请按以下规则将中文时间词映射为小时数：',
+	'- 凌晨 / 半夜 → 0-4 点（如"凌晨三点"=03:00）',
+	'- 早上 / 早晨 / 早 → 6-9 点（如"明早七点"=07:00）',
+	'- 上午 → 9-12 点（如"上午十点"=10:00）',
+	'- 中午 / 正午 → 12 点（如"明天中午"=12:00）',
+	'- 下午 / 午后 → 13-17 点（如"下午五点"=17:00）',
+	'- 傍晚 / 黄昏 → 18-19 点',
+	'- 晚上 / 晚 / 夜晚 / 晚间 → 20-23 点（如"明晚九点"=21:00，"今晚八点"=20:00）',
+	'- 半夜 / 午夜 → 23-1 点',
+	'',
 	'【输出字段说明】',
 	'你需要输出一个 JSON 对象，包含以下字段：',
 	'- timestamp: 解析结果的时间，ISO 8601 格式不含时区偏移（如 "2026-02-10T17:00:00"）',
@@ -43,10 +54,6 @@ export const TZM_SYSTEM_PROMPT = [
 	'4. 如果无法解析为单次时间点，timestamp 和 timezone 均返回空字符串 ""。',
 	'5. 只输出 JSON，不要输出任何额外文本。',
 ].join('\n');
-
-export interface AiCompat {
-	run: (model: string, request: Record<string, unknown>) => Promise<unknown>;
-}
 
 export interface TzmParseResult {
 	timestamp: string;
@@ -69,17 +76,33 @@ export function toIsoOffset(utcOffset: string): string {
 	return `${sign}${h.padStart(2, '0')}:${m}`;
 }
 
+interface OpenAIResponse {
+	choices?: Array<{ message?: { content?: string } }>;
+}
+
 export function parseTzmAiResponse(aiResult: unknown): ParseResult<TzmParseResult> {
 	if (!aiResult || typeof aiResult !== 'object') {
 		return { ok: false };
 	}
 
-	const envelope = aiResult as { response?: unknown };
-	if (!envelope.response || typeof envelope.response !== 'object') {
+	const openai = aiResult as OpenAIResponse;
+	const content = openai.choices?.[0]?.message?.content;
+	if (typeof content !== 'string') {
 		return { ok: false };
 	}
 
-	const response = envelope.response as Record<string, unknown>;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(content);
+	} catch {
+		return { ok: false };
+	}
+
+	if (!parsed || typeof parsed !== 'object') {
+		return { ok: false };
+	}
+
+	const response = parsed as Record<string, unknown>;
 	if (typeof response.timestamp !== 'string' || typeof response.timezone !== 'string') {
 		return { ok: false };
 	}
@@ -104,12 +127,4 @@ export function parseTzmAiResponse(aiResult: unknown): ParseResult<TzmParseResul
 			timezone: response.timezone,
 		},
 	};
-}
-
-export async function runWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-	const timeoutPromise = new Promise<never>((_, reject) => {
-		setTimeout(() => reject(new Error('timeout')), timeoutMs);
-	});
-
-	return Promise.race([promise, timeoutPromise]);
 }

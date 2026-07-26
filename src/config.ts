@@ -1,7 +1,7 @@
-// AI
-// export const AI_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast' as const;
-export const AI_MODEL = '@cf/zai-org/glm-4.7-flash' as const;
-export const AI_TIMEOUT_MS = 8000;
+// OpenAI 兼容端点
+export const OPENAI_MODEL = 'deepseek-chat' as const;
+export const OPENAI_DEFAULT_BASE_URL = 'https://api.deepseek.com' as const;
+export const AI_TIMEOUT_MS = 30000;
 
 // 本地化
 export const LOCALE = 'en' as const;

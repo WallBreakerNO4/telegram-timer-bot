@@ -1,7 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AI_MODEL } from '../src/config';
+import { OPENAI_DEFAULT_BASE_URL, OPENAI_MODEL } from '../src/config';
 import { initSchema, markSeen, upsertUserTimezone, type UserProfile } from '../src/db';
 import { formatLocalTime, formatUtcOffset } from '../src/time_format';
 import worker from '../src/index';
@@ -9,12 +9,25 @@ import worker from '../src/index';
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 const TEST_TOKEN = '123456:test_token';
 const TEST_BOT_USERNAME = 'WallBreakerNO4_Timer_bot';
+const TEST_API_KEY = 'sk-test-key';
 
 function createTelegramOkResponse(): Response {
 	return new Response(JSON.stringify({ ok: true, result: true }), {
 		status: 200,
 		headers: { 'content-type': 'application/json' },
 	});
+}
+
+function createOpenAIResponse(content: Record<string, unknown>): Response {
+	return new Response(
+		JSON.stringify({
+			choices: [{ message: { content: JSON.stringify(content) } }],
+		}),
+		{
+			status: 200,
+			headers: { 'content-type': 'application/json' },
+		},
+	);
 }
 
 function createWebhookRequest(update: Record<string, unknown>) {
@@ -43,16 +56,16 @@ function createTzmUpdate(params?: {
 		replyTo === undefined
 			? undefined
 			: {
-				message_id: replyTo.messageId,
-				date: 1700000000,
-				text: replyTo.text ?? '',
-				from: {
-					id: replyTo.senderId,
-					is_bot: false,
-					first_name: 'reply_sender',
-					username: 'reply_sender_u',
-				},
-			};
+					message_id: replyTo.messageId,
+					date: 1700000000,
+					text: replyTo.text ?? '',
+					from: {
+						id: replyTo.senderId,
+						is_bot: false,
+						first_name: 'reply_sender',
+						username: 'reply_sender_u',
+					},
+				};
 
 	return {
 		update_id: 1,
@@ -84,12 +97,41 @@ function createProfile(userId: string, params?: Partial<UserProfile>): UserProfi
 	};
 }
 
-async function runWebhook(update: Record<string, unknown>, ai?: unknown): Promise<Response> {
+function createFetchMock(openaiResponse: Response | null, extraHandler?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> | Response) {
+	return vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+		async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = typeof input === 'string' ? input : (input instanceof Request ? input.url : String(input));
+
+			if (url.includes('api.telegram.org')) {
+				return createTelegramOkResponse();
+			}
+
+			if (url.includes('/v1/chat/completions')) {
+				if (extraHandler) {
+					return extraHandler(input, init);
+				}
+				if (openaiResponse) {
+					return openaiResponse;
+				}
+			}
+
+			return createTelegramOkResponse();
+		},
+	);
+}
+
+async function runWebhook(update: Record<string, unknown>): Promise<Response> {
 	const request = createWebhookRequest(update);
 	const ctx = createExecutionContext();
 	const response = await worker.fetch(
 		request,
-		{ ...env, SECRET_TELEGRAM_API_TOKEN: TEST_TOKEN, TELEGRAM_BOT_USERNAME: TEST_BOT_USERNAME, AI: ai as unknown as Ai },
+		{
+			...env,
+			SECRET_TELEGRAM_API_TOKEN: TEST_TOKEN,
+			TELEGRAM_BOT_USERNAME: TEST_BOT_USERNAME,
+			OPENAI_API_KEY: TEST_API_KEY,
+			OPENAI_BASE_URL: OPENAI_DEFAULT_BASE_URL,
+		},
 		ctx,
 	);
 	await waitOnExecutionContext(ctx);
@@ -163,27 +205,16 @@ describe('/tzm', () => {
 		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Sender' }), 'Asia/Shanghai');
 
 		const targetDate = new Date('2026-02-10T17:00:00+08:00');
-		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
-			async () => ({
-				response: {
-					timestamp: '2026-02-10T17:00:00',
-					timezone: 'UTC+8',
-				},
-			}),
-		);
+		const openAIResponse = createOpenAIResponse({ timestamp: '2026-02-10T17:00:00', timezone: 'UTC+8' });
 
-		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-			async () => createTelegramOkResponse(),
-		);
+		const outboundFetch = createFetchMock(openAIResponse);
 		vi.stubGlobal('fetch', outboundFetch);
 		vi.spyOn(console, 'log').mockImplementation(() => {});
 
-		const response = await runWebhook(createTzmUpdate({ chatType: 'private', senderId: 1001, messageId: 101 }), { run: aiRun });
+		const response = await runWebhook(createTzmUpdate({ chatType: 'private', senderId: 1001, messageId: 101 }));
 		expect(response.status).toBe(200);
-		expect(outboundFetch).toHaveBeenCalledTimes(1);
-		expect(aiRun).toHaveBeenCalledTimes(1);
 
-		const [input, init] = outboundFetch.mock.calls[0];
+		const [input, init] = outboundFetch.mock.calls[outboundFetch.mock.calls.length - 1];
 		const text = await readOutboundParam(input, init, 'text');
 		const replyTo = await readOutboundParam(input, init, 'reply_to_message_id');
 		expect(text).not.toBeNull();
@@ -198,9 +229,7 @@ describe('/tzm', () => {
 	});
 
 	it('群聊但请求者未登记时区时提示请私聊初始化', async () => {
-		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-			async () => createTelegramOkResponse(),
-		);
+		const outboundFetch = createFetchMock(null);
 		vi.stubGlobal('fetch', outboundFetch);
 		vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -219,18 +248,16 @@ describe('/tzm', () => {
 		await upsertUserTimezone(env, createProfile('2002', { firstName: 'Bob' }), 'Europe/Dublin');
 		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Alice' }), 'Asia/Shanghai');
 
-		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
-			async () => ({
-				response: {
-					timestamp: '2026-02-10T17:00:00',
-					timezone: 'UTC+8',
-				},
-			}),
-		);
+		const openAIResponse = createOpenAIResponse({ timestamp: '2026-02-10T17:00:00', timezone: 'UTC+8' });
+		let capturedBody: Record<string, unknown> = {};
 
-		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-			async () => createTelegramOkResponse(),
-		);
+		const outboundFetch = createFetchMock(openAIResponse, async (input, init) => {
+			const body = init?.body;
+			if (typeof body === 'string') {
+				capturedBody = JSON.parse(body) as Record<string, unknown>;
+			}
+			return openAIResponse;
+		});
 		vi.stubGlobal('fetch', outboundFetch);
 		vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -246,15 +273,11 @@ describe('/tzm', () => {
 					text: '明天下午五点我们一起来看比赛',
 				},
 			}),
-			{ run: aiRun },
 		);
 		expect(response.status).toBe(200);
-		expect(outboundFetch).toHaveBeenCalledTimes(1);
-		expect(aiRun).toHaveBeenCalledTimes(1);
 
-		const aiCall = aiRun.mock.calls[0];
-		const aiPayload = (aiCall?.[1] ?? {}) as Record<string, unknown>;
-		const messages = aiPayload.messages as Array<{ role: string; content: string }>;
+		expect(capturedBody.model).toBe(OPENAI_MODEL);
+		const messages = capturedBody.messages as Array<{ role: string; content: string }>;
 		const prompt = JSON.parse(messages[1]?.content ?? '{}') as {
 			expression?: string;
 			user?: { name?: string; username?: string | null; timezone?: string; localTime?: string };
@@ -268,7 +291,8 @@ describe('/tzm', () => {
 		expect(prompt.context?.[0]?.text).toBe('明天下午五点我们一起来看比赛');
 		expect(typeof prompt.context?.[0]?.time).toBe('string');
 
-		const [input, init] = outboundFetch.mock.calls[0];
+		const lastCall = outboundFetch.mock.calls[outboundFetch.mock.calls.length - 1];
+		const [input, init] = lastCall;
 		const replyTo = await readOutboundParam(input, init, 'reply_to_message_id');
 		expect(replyTo).toBe('110');
 	});
@@ -286,35 +310,26 @@ describe('/tzm', () => {
 		await markSeen(env, chatId, createProfile('1002', { username: 'bob_u' }), 2000);
 
 		const targetDate = new Date('2026-02-10T17:00:00+08:00');
+		const openAIResponse = createOpenAIResponse({ timestamp: '2026-02-10T17:00:00', timezone: 'UTC+8' });
 
-		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
-			async () => ({
-			response: {
-				timestamp: '2026-02-10T17:00:00',
-				timezone: 'UTC+8',
-			},
-		}),
-		);
-		const fakeAI = { run: aiRun };
-
-		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-			async () => createTelegramOkResponse(),
-		);
+		let capturedBody: Record<string, unknown> = {};
+		const outboundFetch = createFetchMock(openAIResponse, async (input, init) => {
+			const body = init?.body;
+			if (typeof body === 'string') {
+				capturedBody = JSON.parse(body) as Record<string, unknown>;
+			}
+			return openAIResponse;
+		});
 		vi.stubGlobal('fetch', outboundFetch);
 		vi.spyOn(console, 'log').mockImplementation(() => {});
 
-		const response = await runWebhook(createTzmUpdate({ chatType: 'group', messageId: 103, senderId: 1001 }), fakeAI);
+		const response = await runWebhook(createTzmUpdate({ chatType: 'group', messageId: 103, senderId: 1001 }));
 		expect(response.status).toBe(200);
-		expect(outboundFetch).toHaveBeenCalledTimes(1);
-		expect(aiRun).toHaveBeenCalledTimes(1);
 
-		const aiCall = aiRun.mock.calls[0];
-		const model = String(aiCall?.[0] ?? '');
-		const aiPayload = (aiCall?.[1] ?? {}) as Record<string, unknown>;
-		expect(model).toBe(AI_MODEL);
-		expect(aiPayload.response_format).toMatchObject({ type: 'json_schema' });
+		expect(capturedBody.model).toBe(OPENAI_MODEL);
+		expect(capturedBody.response_format).toMatchObject({ type: 'json_object' });
 
-		const messages = aiPayload.messages as Array<{ role: string; content: string }>;
+		const messages = capturedBody.messages as Array<{ role: string; content: string }>;
 		expect(messages).toHaveLength(2);
 		expect(messages[0]?.role).toBe('system');
 		expect(typeof messages[0]?.content).toBe('string');
@@ -331,7 +346,8 @@ describe('/tzm', () => {
 		expect(typeof prompt.currentTimeUtc).toBe('string');
 		expect(prompt.context).toEqual([]);
 
-		const [input, init] = outboundFetch.mock.calls[0];
+		const lastCall = outboundFetch.mock.calls[outboundFetch.mock.calls.length - 1];
+		const [input, init] = lastCall;
 		const text = await readOutboundParam(input, init, 'text');
 		expect(text).not.toBeNull();
 
@@ -351,35 +367,28 @@ describe('/tzm', () => {
 		expect(lines.slice(1).join('\n')).toBe([expectedShanghaiLine, expectedDublinLine].join('\n'));
 	});
 
-	it('给 AI 提供请求者时区的当前日期，避免 UTC 日期导致“明天”偏移', async () => {
+	it('给 AI 提供请求者时区的当前日期，避免 UTC 日期导致"明天"偏移', async () => {
 		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Alice' }), 'Asia/Shanghai');
 
 		vi.setSystemTime(new Date('2026-02-09T16:30:00.000Z'));
 
-		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
-			async () => ({
-				response: {
-					timestamp: '2026-02-11T11:00:00',
-					timezone: 'UTC+8',
-				},
-			}),
-		);
+		const openAIResponse = createOpenAIResponse({ timestamp: '2026-02-11T11:00:00', timezone: 'UTC+8' });
 
-		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-			async () => createTelegramOkResponse(),
-		);
+		let capturedBody: Record<string, unknown> = {};
+		const outboundFetch = createFetchMock(openAIResponse, async (input, init) => {
+			const body = init?.body;
+			if (typeof body === 'string') {
+				capturedBody = JSON.parse(body) as Record<string, unknown>;
+			}
+			return openAIResponse;
+		});
 		vi.stubGlobal('fetch', outboundFetch);
 		vi.spyOn(console, 'log').mockImplementation(() => {});
 
-		const response = await runWebhook(createTzmUpdate({ chatType: 'group', messageId: 120, senderId: 1001, text: '/tzm 明天中午11点' }), {
-			run: aiRun,
-		});
+		const response = await runWebhook(createTzmUpdate({ chatType: 'group', messageId: 120, senderId: 1001, text: '/tzm 明天中午11点' }));
 		expect(response.status).toBe(200);
-		expect(aiRun).toHaveBeenCalledTimes(1);
 
-		const aiCall = aiRun.mock.calls[0];
-		const aiPayload = (aiCall?.[1] ?? {}) as Record<string, unknown>;
-		const messages = aiPayload.messages as Array<{ role: string; content: string }>;
+		const messages = capturedBody.messages as Array<{ role: string; content: string }>;
 		const prompt = JSON.parse(messages[1]?.content ?? '{}') as {
 			currentTimeUtc?: string;
 			user?: { name?: string; username?: string | null; timezone?: string; localTime?: string };
@@ -394,53 +403,41 @@ describe('/tzm', () => {
 		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Alice' }), 'Asia/Shanghai');
 		await markSeen(env, '42', createProfile('1001', { firstName: 'Alice' }), 1000);
 
-		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
-			async () => ({
-				response: {
-					timestamp: '',
-					timezone: '',
-				},
-			}),
-		);
+		const openAIResponse = createOpenAIResponse({ timestamp: '', timezone: '' });
 
-		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-			async () => createTelegramOkResponse(),
-		);
+		const outboundFetch = createFetchMock(openAIResponse);
 		vi.stubGlobal('fetch', outboundFetch);
 		vi.spyOn(console, 'log').mockImplementation(() => {});
 
-		const response = await runWebhook(createTzmUpdate({ chatType: 'group', messageId: 104, senderId: 1001 }), { run: aiRun });
+		const response = await runWebhook(createTzmUpdate({ chatType: 'group', messageId: 104, senderId: 1001 }));
 		expect(response.status).toBe(200);
-		expect(outboundFetch).toHaveBeenCalledTimes(1);
 
-		const [input, init] = outboundFetch.mock.calls[0];
+		const lastCall = outboundFetch.mock.calls[outboundFetch.mock.calls.length - 1];
+		const [input, init] = lastCall;
 		const text = await readOutboundParam(input, init, 'text');
 		const replyTo = await readOutboundParam(input, init, 'reply_to_message_id');
 		expect(text).toBe('解析失败：请用更具体的表达，例如：/tzm 明天下午五点');
 		expect(replyTo).toBe('104');
 	});
 
-	it('AI 抛错时回复稳定错误文案', async () => {
+	it('AI API 返回非 200 时回复稳定错误文案', async () => {
 		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Alice' }), 'Asia/Shanghai');
 		await markSeen(env, '42', createProfile('1001', { firstName: 'Alice' }), 1000);
 
-		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
-			async () => {
-				throw new Error("JSON Mode couldn't be met");
-			},
-		);
+		const errorResponse = new Response(JSON.stringify({ error: { message: 'Service Unavailable' } }), {
+			status: 503,
+			headers: { 'content-type': 'application/json' },
+		});
 
-		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-			async () => createTelegramOkResponse(),
-		);
+		const outboundFetch = createFetchMock(errorResponse);
 		vi.stubGlobal('fetch', outboundFetch);
 		vi.spyOn(console, 'log').mockImplementation(() => {});
 
-		const response = await runWebhook(createTzmUpdate({ chatType: 'group', messageId: 105, senderId: 1001 }), { run: aiRun });
+		const response = await runWebhook(createTzmUpdate({ chatType: 'group', messageId: 105, senderId: 1001 }));
 		expect(response.status).toBe(200);
-		expect(outboundFetch).toHaveBeenCalledTimes(1);
 
-		const [input, init] = outboundFetch.mock.calls[0];
+		const lastCall = outboundFetch.mock.calls[outboundFetch.mock.calls.length - 1];
+		const [input, init] = lastCall;
 		const text = await readOutboundParam(input, init, 'text');
 		const replyTo = await readOutboundParam(input, init, 'reply_to_message_id');
 		expect(text).toBe('解析失败：请用更具体的表达，例如：/tzm 明天下午五点');
@@ -450,9 +447,7 @@ describe('/tzm', () => {
 	it('周期表达直接提示仅支持单次时间点', async () => {
 		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Alice' }), 'Asia/Shanghai');
 
-		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-			async () => createTelegramOkResponse(),
-		);
+		const outboundFetch = createFetchMock(null);
 		vi.stubGlobal('fetch', outboundFetch);
 		vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -481,26 +476,17 @@ describe('/tzm', () => {
 			await markSeen(env, chatId, profile, 100000 + index);
 		}
 
-		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
-			async () => ({
-				response: {
-					timestamp: '2026-02-10T09:00:00',
-					timezone: 'UTC+8',
-				},
-			}),
-		);
+		const openAIResponse = createOpenAIResponse({ timestamp: '2026-02-10T09:00:00', timezone: 'UTC+8' });
 
-		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-			async () => createTelegramOkResponse(),
-		);
+		const outboundFetch = createFetchMock(openAIResponse);
 		vi.stubGlobal('fetch', outboundFetch);
 		vi.spyOn(console, 'log').mockImplementation(() => {});
 
-		const response = await runWebhook(createTzmUpdate({ chatType: 'supergroup', messageId: 109, senderId: 1001 }), { run: aiRun });
+		const response = await runWebhook(createTzmUpdate({ chatType: 'supergroup', messageId: 109, senderId: 1001 }));
 		expect(response.status).toBe(200);
-		expect(outboundFetch).toHaveBeenCalledTimes(1);
 
-		const [input, init] = outboundFetch.mock.calls[0];
+		const lastCall = outboundFetch.mock.calls[outboundFetch.mock.calls.length - 1];
+		const [input, init] = lastCall;
 		const text = String((await readOutboundParam(input, init, 'text')) ?? '');
 
 		expect(text.length).toBeLessThanOrEqual(4096);
