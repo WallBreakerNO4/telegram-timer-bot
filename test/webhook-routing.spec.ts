@@ -20,6 +20,7 @@ function createStartUpdate(): Record<string, unknown> {
 			message_id: 10,
 			date: 1700000000,
 			text: '/start',
+			entities: [{ type: 'bot_command', offset: 0, length: 6 }],
 			chat: {
 				id: 42,
 				type: 'private',

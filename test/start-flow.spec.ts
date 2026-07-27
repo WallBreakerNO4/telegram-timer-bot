@@ -29,13 +29,35 @@ function readOutboundUrl(input: RequestInfo | URL): string {
   return input instanceof Request ? input.url : String(input);
 }
 
+async function readOutboundParam(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  key: string,
+): Promise<string | null> {
+  const fromUrl = new URL(readOutboundUrl(input)).searchParams.get(key);
+  if (fromUrl !== null) return fromUrl;
+
+  const body = input instanceof Request ? await input.clone().text() : typeof init?.body === "string" ? init.body : "";
+  if (!body) return null;
+
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    const value = parsed[key];
+    return value === undefined ? null : typeof value === "object" ? JSON.stringify(value) : String(value);
+  } catch {
+    return new URLSearchParams(body).get(key);
+  }
+}
+
 function createStartUpdate(chatType: "private" | "group", text = "/start"): Record<string, unknown> {
+	const commandLength = text.split(/\s/u)[0]?.length ?? 0;
 	return {
 		update_id: 1,
 		message: {
 			message_id: 10,
 			date: 1700000000,
 			text,
+			entities: [{ type: "bot_command", offset: 0, length: commandLength }],
 			chat: {
 				id: 42,
 				type: chatType,
@@ -114,10 +136,11 @@ describe("/start 与 callback 单消息流", () => {
 		const response = await runWebhook(createStartUpdate("private", "/start@WallBreakerNO4_Timer_bot"));
 		expect(response.status).toBe(200);
 		expect(outboundFetch).toHaveBeenCalledTimes(1);
-		const callUrl = readOutboundUrl(outboundFetch.mock.calls[0][0]);
+		const [input, init] = outboundFetch.mock.calls[0];
+		const callUrl = readOutboundUrl(input);
 		const parsed = new URL(callUrl);
 		expect(parsed.pathname).toContain("/sendMessage");
-		expect(parsed.searchParams.get("text")).toBe("请选择区域");
+		expect(await readOutboundParam(input, init, "text")).toBe("请选择区域");
 	});
 
 	it("/changetz@BotUsername 私聊时也能触发", async () => {
@@ -130,10 +153,11 @@ describe("/start 与 callback 单消息流", () => {
 		const response = await runWebhook(createStartUpdate("private", "/changetz@WallBreakerNO4_Timer_bot"));
 		expect(response.status).toBe(200);
 		expect(outboundFetch).toHaveBeenCalledTimes(1);
-		const callUrl = readOutboundUrl(outboundFetch.mock.calls[0][0]);
+		const [input, init] = outboundFetch.mock.calls[0];
+		const callUrl = readOutboundUrl(input);
 		const parsed = new URL(callUrl);
 		expect(parsed.pathname).toContain("/sendMessage");
-		expect(parsed.searchParams.get("text")).toBe("请选择区域");
+		expect(await readOutboundParam(input, init, "text")).toBe("请选择区域");
 	});
 
 	it("/start 非私聊时提示请私聊", async () => {
@@ -147,10 +171,11 @@ describe("/start 与 callback 单消息流", () => {
     expect(response.status).toBe(200);
 
     expect(outboundFetch).toHaveBeenCalledTimes(1);
-    const callUrl = readOutboundUrl(outboundFetch.mock.calls[0][0]);
-    const parsed = new URL(callUrl);
-    expect(parsed.pathname).toContain("/sendMessage");
-    expect(parsed.searchParams.get("text")).toBe("请私聊我使用 /start");
+	    const [input, init] = outboundFetch.mock.calls[0];
+	    const callUrl = readOutboundUrl(input);
+	    const parsed = new URL(callUrl);
+	    expect(parsed.pathname).toContain("/sendMessage");
+	    expect(await readOutboundParam(input, init, "text")).toBe("请私聊我使用 /start");
   });
 
   it("start -> 区域 -> 时区 会写入 DB 且每次 callback 都 answer", async () => {
@@ -166,9 +191,8 @@ describe("/start 与 callback 单消息流", () => {
 
     await expect(runWebhook(createStartUpdate("private"))).resolves.toMatchObject({ status: 200 });
 
-    const startUrl = readOutboundUrl(outboundFetch.mock.calls[0][0]);
-    const startParams = new URL(startUrl).searchParams;
-    const startMarkup = JSON.parse(startParams.get("reply_markup") ?? "{}");
+	    const [startInput, startInit] = outboundFetch.mock.calls[0];
+	    const startMarkup = JSON.parse((await readOutboundParam(startInput, startInit, "reply_markup")) ?? "{}");
     const startButtons = (startMarkup.inline_keyboard ?? []).flat() as Array<{ callback_data?: string }>;
     expect(startButtons.some((button) => button.callback_data?.startsWith("r|"))).toBe(true);
 

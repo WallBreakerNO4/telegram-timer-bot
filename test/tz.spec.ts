@@ -44,6 +44,7 @@ function createTzUpdate(params?: {
     replyUsername = "target_u",
     text = "/tz",
   } = params ?? {};
+  const commandLength = text.split(/\s/u)[0]?.length ?? 0;
 
   return {
     update_id: 1,
@@ -51,6 +52,7 @@ function createTzUpdate(params?: {
       message_id: messageId,
       date: 1700000000,
       text,
+      entities: [{ type: "bot_command", offset: 0, length: commandLength }],
       chat: {
         id: 42,
         type: chatType,

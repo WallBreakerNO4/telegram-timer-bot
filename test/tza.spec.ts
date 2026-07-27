@@ -32,6 +32,7 @@ function createTzaUpdate(params?: {
 	text?: string;
 }): Record<string, unknown> {
 	const { chatType = "group", chatId = 42, senderId = 7, messageId = 10, text = "/tza" } = params ?? {};
+	const commandLength = text.split(/\s/u)[0]?.length ?? 0;
 
 	return {
 		update_id: 1,
@@ -39,6 +40,7 @@ function createTzaUpdate(params?: {
 			message_id: messageId,
 			date: 1700000000,
 			text,
+			entities: [{ type: "bot_command", offset: 0, length: commandLength }],
 			chat: {
 				id: chatId,
 				type: chatType,

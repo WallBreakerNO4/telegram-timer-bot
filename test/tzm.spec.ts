@@ -9,12 +9,33 @@ import worker from '../src/index';
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 const TEST_TOKEN = '123456:test_token';
 const TEST_BOT_USERNAME = 'WallBreakerNO4_Timer_bot';
+type AiRun = (model: string, request: Record<string, unknown>) => Promise<unknown>;
 
 function createTelegramOkResponse(): Response {
 	return new Response(JSON.stringify({ ok: true, result: true }), {
 		status: 200,
 		headers: { 'content-type': 'application/json' },
 	});
+}
+
+function createAiToolCallResult(result: { timestamp: string; timezone: string }): Record<string, unknown> {
+	return {
+		choices: [
+			{
+				message: {
+					tool_calls: [
+						{
+							type: 'function',
+							function: {
+								name: 'resolve_time',
+								arguments: JSON.stringify(result),
+							},
+						},
+					],
+				},
+			},
+		],
+	};
 }
 
 function createWebhookRequest(update: Record<string, unknown>) {
@@ -38,6 +59,7 @@ function createTzmUpdate(params?: {
 	};
 }): Record<string, unknown> {
 	const { chatType = 'group', chatId = 42, senderId = 7, messageId = 10, text = '/tzm 明天下午五点', replyTo } = params ?? {};
+	const commandLength = text.startsWith('/') ? (text.split(/\s/u)[0]?.length ?? 0) : 0;
 
 	const replyToMessage =
 		replyTo === undefined
@@ -60,6 +82,7 @@ function createTzmUpdate(params?: {
 			message_id: messageId,
 			date: 1700000000,
 			text,
+			entities: commandLength > 0 ? [{ type: 'bot_command', offset: 0, length: commandLength }] : undefined,
 			chat: {
 				id: chatId,
 				type: chatType,
@@ -171,14 +194,7 @@ describe('/tzm', () => {
 		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Sender' }), 'Asia/Shanghai');
 
 		const targetDate = new Date('2026-02-10T17:00:00+08:00');
-		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
-			async () => ({
-				response: {
-					timestamp: '2026-02-10T17:00:00',
-					timezone: 'UTC+8',
-				},
-			}),
-		);
+		const aiRun = vi.fn<AiRun>(async () => createAiToolCallResult({ timestamp: '2026-02-10T17:00:00', timezone: 'UTC+8' }));
 
 		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
 			async () => createTelegramOkResponse(),
@@ -205,6 +221,29 @@ describe('/tzm', () => {
 		expect(replyTo).toBe('101');
 	});
 
+	it('群聊中带 bot username 的定向命令会进入 /tzm handler', async () => {
+		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Alice' }), 'Asia/Shanghai');
+		const aiRun = vi.fn<AiRun>(async () => createAiToolCallResult({ timestamp: '2026-07-27T17:00:00', timezone: 'UTC+8' }));
+		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+			async () => createTelegramOkResponse(),
+		);
+		vi.stubGlobal('fetch', outboundFetch);
+
+		const response = await runWebhook(
+			createTzmUpdate({
+				chatType: 'group',
+				senderId: 1001,
+				messageId: 121,
+				text: `/tzm@${TEST_BOT_USERNAME} 下午五点`,
+			}),
+			{ run: aiRun },
+		);
+
+		expect(response.status).toBe(200);
+		expect(aiRun).toHaveBeenCalledTimes(1);
+		expect(outboundFetch).toHaveBeenCalledTimes(1);
+	});
+
 	it('群聊但请求者未登记时区时提示请私聊初始化', async () => {
 		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
 			async () => createTelegramOkResponse(),
@@ -227,14 +266,7 @@ describe('/tzm', () => {
 		await upsertUserTimezone(env, createProfile('2002', { firstName: 'Bob' }), 'Europe/Dublin');
 		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Alice' }), 'Asia/Shanghai');
 
-		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
-			async () => ({
-				response: {
-					timestamp: '2026-02-10T17:00:00',
-					timezone: 'UTC+8',
-				},
-			}),
-		);
+		const aiRun = vi.fn<AiRun>(async () => createAiToolCallResult({ timestamp: '2026-02-10T17:00:00', timezone: 'UTC+8' }));
 
 		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
 			async () => createTelegramOkResponse(),
@@ -295,14 +327,7 @@ describe('/tzm', () => {
 
 		const targetDate = new Date('2026-02-10T17:00:00+08:00');
 
-		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
-			async () => ({
-			response: {
-				timestamp: '2026-02-10T17:00:00',
-				timezone: 'UTC+8',
-			},
-		}),
-		);
+		const aiRun = vi.fn<AiRun>(async () => createAiToolCallResult({ timestamp: '2026-02-10T17:00:00', timezone: 'UTC+8' }));
 		const fakeAI = { run: aiRun };
 
 		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
@@ -320,13 +345,24 @@ describe('/tzm', () => {
 		const model = String(aiCall?.[0] ?? '');
 		const aiPayload = (aiCall?.[1] ?? {}) as Record<string, unknown>;
 		expect(model).toBe(AI_MODEL);
-		expect(aiPayload.response_format).toMatchObject({ type: 'json_schema' });
+		expect(aiPayload.response_format).toBeUndefined();
+		expect(aiPayload.tool_choice).toBe('required');
+		expect(aiPayload.reasoning_effort).toBe('low');
+		expect(aiPayload.max_completion_tokens).toBe(384);
+		expect(aiPayload.temperature).toBe(0);
+		expect(aiPayload.tools).toEqual([
+			expect.objectContaining({
+				type: 'function',
+				function: expect.objectContaining({ name: 'resolve_time' }),
+			}),
+		]);
 
 		const messages = aiPayload.messages as Array<{ role: string; content: string }>;
 		expect(messages).toHaveLength(2);
 		expect(messages[0]?.role).toBe('system');
 		expect(typeof messages[0]?.content).toBe('string');
-		expect(messages[0]?.content).toContain('currentTimeUtc');
+		expect(messages[0]?.content).toContain('resolve_time');
+		expect(messages[0]?.content).toContain('当地墙上时间');
 		expect(messages[1]?.role).toBe('user');
 		const prompt = JSON.parse(messages[1]?.content ?? '{}') as {
 			expression?: string;
@@ -364,14 +400,7 @@ describe('/tzm', () => {
 
 		vi.setSystemTime(new Date('2026-02-09T16:30:00.000Z'));
 
-		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
-			async () => ({
-				response: {
-					timestamp: '2026-02-11T11:00:00',
-					timezone: 'UTC+8',
-				},
-			}),
-		);
+		const aiRun = vi.fn<AiRun>(async () => createAiToolCallResult({ timestamp: '2026-02-11T11:00:00', timezone: 'UTC+8' }));
 
 		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
 			async () => createTelegramOkResponse(),
@@ -402,14 +431,7 @@ describe('/tzm', () => {
 		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Alice' }), 'Asia/Shanghai');
 		await markSeen(env, '42', createProfile('1001', { firstName: 'Alice' }), 1000);
 
-		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
-			async () => ({
-				response: {
-					timestamp: '',
-					timezone: '',
-				},
-			}),
-		);
+		const aiRun = vi.fn<AiRun>(async () => createAiToolCallResult({ timestamp: '', timezone: '' }));
 
 		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
 			async () => createTelegramOkResponse(),
@@ -427,11 +449,9 @@ describe('/tzm', () => {
 		await upsertUserTimezone(env, createProfile('1001', { firstName: 'Alice' }), 'Asia/Shanghai');
 		await markSeen(env, '42', createProfile('1001', { firstName: 'Alice' }), 1000);
 
-		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
-			async () => {
-				throw new Error("JSON Mode couldn't be met");
-			},
-		);
+		const aiRun = vi.fn<AiRun>(async () => {
+			throw new Error('Workers AI unavailable');
+		});
 
 		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
 			async () => createTelegramOkResponse(),
@@ -440,7 +460,7 @@ describe('/tzm', () => {
 		vi.spyOn(console, 'log').mockImplementation(() => {});
 
 		await expect(runWebhook(createTzmUpdate({ chatType: 'group', messageId: 105, senderId: 1001 }), { run: aiRun })).rejects.toThrow(
-			"JSON Mode couldn't be met",
+			'Workers AI unavailable',
 		);
 		expect(outboundFetch).not.toHaveBeenCalled();
 	});
@@ -479,14 +499,7 @@ describe('/tzm', () => {
 			await markSeen(env, chatId, profile, 100000 + index);
 		}
 
-		const aiRun = vi.fn<(model: string, request: Record<string, unknown>) => Promise<{ response: Record<string, unknown> }>>(
-			async () => ({
-				response: {
-					timestamp: '2026-02-10T09:00:00',
-					timezone: 'UTC+8',
-				},
-			}),
-		);
+		const aiRun = vi.fn<AiRun>(async () => createAiToolCallResult({ timestamp: '2026-02-10T09:00:00', timezone: 'UTC+8' }));
 
 		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
 			async () => createTelegramOkResponse(),

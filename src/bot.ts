@@ -1,6 +1,7 @@
 import { Bot, webhookCallback } from 'grammy';
 import { type UserFromGetMe } from 'grammy/types';
 
+import { WEBHOOK_TIMEOUT_MS } from './config';
 import { registerCallbackHandler } from './handlers/callback';
 import { registerStartHandlers } from './handlers/start';
 import { registerTzHandler } from './handlers/tz';
@@ -47,5 +48,5 @@ export function createBot(token: string, env: Env): Bot {
 }
 
 export function getWebhookHandler(token: string, env: Env): (request: Request) => Promise<Response> {
-  return webhookCallback(createBot(token, env), 'cloudflare-mod');
+  return webhookCallback(createBot(token, env), 'cloudflare-mod', { timeoutMilliseconds: WEBHOOK_TIMEOUT_MS });
 }

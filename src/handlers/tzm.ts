@@ -12,21 +12,13 @@ import {
   parseTzmAiResponse,
   runWithTimeout,
   toIsoOffset,
+  TZM_AI_INFERENCE_OPTIONS,
   TZM_SYSTEM_PROMPT,
+  TZM_TOOL,
 } from '../tzm_ai';
 
 const SPLIT_REGEX = /\s+/u;
 const HOUR_CYCLE = 'h23' as const;
-
-const TZM_JSON_SCHEMA = {
-  type: 'object',
-  properties: {
-    timestamp: { type: 'string' },
-    timezone: { type: 'string' },
-  },
-  required: ['timestamp', 'timezone'],
-  additionalProperties: false,
-} as const;
 
 function parseCommandExpression(text: string | undefined): string {
   if (!text) {
@@ -213,10 +205,8 @@ export function registerTzmHandler(bot: Bot, env: Env): void {
             }),
           },
         ],
-        response_format: {
-          type: 'json_schema',
-          json_schema: TZM_JSON_SCHEMA,
-        },
+        tools: [TZM_TOOL],
+        ...TZM_AI_INFERENCE_OPTIONS,
       }),
       AI_TIMEOUT_MS,
     );
