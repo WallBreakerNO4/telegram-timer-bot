@@ -2,6 +2,22 @@ import { MSG_NO_MEMBERS, MSG_PARSED_AS, MSG_TRUNCATED, MSG_TRUNCATED_COUNT } fro
 
 export const TELEGRAM_MESSAGE_MAX_LENGTH = 4096;
 
+export type TzaMessageMember =
+  | {
+      ok: true;
+      displayName: string;
+      timezone: string;
+      localDate: string;
+      localTime: string;
+      utcOffset: string;
+    }
+  | {
+      ok: false;
+      displayName: string;
+      timezone: string;
+      error: string;
+    };
+
 function truncateText(text: string, maxLength: number): string {
   if (maxLength <= 0) {
     return '';
@@ -30,48 +46,110 @@ function truncateHeaderPreservingPrefix(header: string, maxLength: number): stri
   return truncateText(header, maxLength);
 }
 
-export function buildTzaMessage(lines: string[]): string {
-  if (lines.length === 0) {
-    return MSG_NO_MEMBERS;
+function compareTzaMembers(left: TzaMessageMember, right: TzaMessageMember): number {
+  if (left.ok !== right.ok) {
+    return left.ok ? -1 : 1;
   }
 
-  const fullMessage = lines.join('\n');
-  if (fullMessage.length <= TELEGRAM_MESSAGE_MAX_LENGTH) {
+  if (left.ok && right.ok) {
+    return (
+      right.localDate.localeCompare(left.localDate) ||
+      right.localTime.localeCompare(left.localTime) ||
+      left.timezone.localeCompare(right.timezone)
+    );
+  }
+
+  if (!left.ok && !right.ok) {
+    return left.timezone.localeCompare(right.timezone);
+  }
+
+  return 0;
+}
+
+function renderTzaMembers(
+  visibleMembers: readonly TzaMessageMember[],
+  totalCount: number,
+): string {
+  const validMembers = visibleMembers.filter((member): member is Extract<TzaMessageMember, { ok: true }> => member.ok);
+  const invalidMembers = visibleMembers.filter((member): member is Extract<TzaMessageMember, { ok: false }> => !member.ok);
+  const blocks: string[] = [];
+
+  const dateGroups = new Map<string, Map<string, { utcOffset: string; timezones: Map<string, string[]> }>>();
+  for (const member of validMembers) {
+    let timeGroups = dateGroups.get(member.localDate);
+    if (!timeGroups) {
+      timeGroups = new Map();
+      dateGroups.set(member.localDate, timeGroups);
+    }
+
+    let timeGroup = timeGroups.get(member.localTime);
+    if (!timeGroup) {
+      timeGroup = { utcOffset: member.utcOffset, timezones: new Map() };
+      timeGroups.set(member.localTime, timeGroup);
+    }
+
+    const names = timeGroup.timezones.get(member.timezone) ?? [];
+    names.push(member.displayName);
+    timeGroup.timezones.set(member.timezone, names);
+  }
+
+  for (const [localDate, timeGroups] of dateGroups) {
+    for (const [localTime, timeGroup] of timeGroups) {
+      const timezoneLines = [...timeGroup.timezones].map(([timezone, names]) => `${timezone}：${names.join('、')}`);
+      blocks.push([`${localDate} · ${timeGroup.utcOffset} · ${localTime}`, ...timezoneLines].join('\n'));
+    }
+  }
+
+  const errorGroups = new Map<string, string[]>();
+  for (const member of invalidMembers) {
+    const names = errorGroups.get(member.error) ?? [];
+    names.push(member.displayName);
+    errorGroups.set(member.error, names);
+  }
+  if (errorGroups.size > 0) {
+    blocks.push([...errorGroups].map(([error, names]) => `${error}：${names.join('、')}`).join('\n'));
+  }
+
+  const hiddenCount = totalCount - visibleMembers.length;
+  if (hiddenCount > 0) {
+    blocks.push(MSG_TRUNCATED_COUNT.replace('{n}', String(hiddenCount)));
+  }
+
+  return blocks.join('\n\n');
+}
+
+function buildTzaMessageWithinLimit(members: readonly TzaMessageMember[], maxLength: number): string {
+  if (members.length === 0) {
+    return truncateText(MSG_NO_MEMBERS, maxLength);
+  }
+
+  const sortedMembers = [...members].sort(compareTzaMembers);
+  const fullMessage = renderTzaMembers(sortedMembers, sortedMembers.length);
+  if (fullMessage.length <= maxLength) {
     return fullMessage;
   }
 
-  for (let visibleCount = lines.length - 1; visibleCount >= 0; visibleCount -= 1) {
-    const hiddenCount = lines.length - visibleCount;
-    const suffix = MSG_TRUNCATED_COUNT.replace('{n}', String(hiddenCount));
-    const visibleText = visibleCount > 0 ? lines.slice(0, visibleCount).join('\n') : '';
-    const candidate = visibleText ? `${visibleText}\n${suffix}` : suffix;
-
-    if (candidate.length <= TELEGRAM_MESSAGE_MAX_LENGTH) {
+  for (let visibleCount = sortedMembers.length - 1; visibleCount >= 0; visibleCount -= 1) {
+    const candidate = renderTzaMembers(sortedMembers.slice(0, visibleCount), sortedMembers.length);
+    if (candidate.length <= maxLength) {
       return candidate;
     }
   }
 
-  return MSG_TRUNCATED;
+  return truncateText(MSG_TRUNCATED, maxLength);
 }
 
-export function buildTzmMessage(header: string, lines: string[]): string {
+export function buildTzaMessage(members: readonly TzaMessageMember[]): string {
+  return buildTzaMessageWithinLimit(members, TELEGRAM_MESSAGE_MAX_LENGTH);
+}
+
+export function buildTzmMessage(header: string, members: readonly TzaMessageMember[]): string {
   const normalizedHeader = header.replace(/\s*\n+\s*/gu, ' ').trim();
-  const contentLines = lines.length > 0 ? lines : [MSG_NO_MEMBERS];
-  const fullText = `${normalizedHeader}\n${contentLines.join('\n')}`;
+  const contentMaxLength = TELEGRAM_MESSAGE_MAX_LENGTH - normalizedHeader.length - 2;
+  const content = buildTzaMessageWithinLimit(members, Math.max(0, contentMaxLength));
+  const fullText = `${normalizedHeader}\n\n${content}`;
   if (fullText.length <= TELEGRAM_MESSAGE_MAX_LENGTH) {
     return fullText;
-  }
-
-  for (let visibleCount = contentLines.length - 1; visibleCount >= 0; visibleCount -= 1) {
-    const hiddenCount = contentLines.length - visibleCount;
-    const suffix = MSG_TRUNCATED_COUNT.replace('{n}', String(hiddenCount));
-    const visibleText = visibleCount > 0 ? contentLines.slice(0, visibleCount).join('\n') : '';
-    const body = visibleText ? `${visibleText}\n${suffix}` : suffix;
-    const candidate = `${normalizedHeader}\n${body}`;
-
-    if (candidate.length <= TELEGRAM_MESSAGE_MAX_LENGTH) {
-      return candidate;
-    }
   }
 
   const truncationSuffix = MSG_TRUNCATED;

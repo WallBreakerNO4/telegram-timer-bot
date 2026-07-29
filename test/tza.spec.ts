@@ -1,7 +1,6 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { formatLocalTime, formatUtcOffset } from "../src/time_format";
 import { initSchema, markSeen, upsertUserTimezone, type UserProfile } from "../src/db";
 import worker from "../src/index";
 
@@ -62,6 +61,18 @@ function createProfile(userId: string, params?: Partial<UserProfile>): UserProfi
 		firstName: params?.firstName ?? null,
 		lastName: params?.lastName ?? null,
 	};
+}
+
+async function registerSeenMember(
+	chatId: string,
+	userId: string,
+	timezone: string,
+	profileParams: Partial<UserProfile>,
+	lastSeenAt: number,
+): Promise<void> {
+	const profile = createProfile(userId, profileParams);
+	await upsertUserTimezone(env, profile, timezone);
+	await markSeen(env, chatId, profile, lastSeenAt);
 }
 
 async function runWebhook(update: Record<string, unknown>): Promise<Response> {
@@ -200,21 +211,14 @@ describe("/tza", () => {
 		expect(text).toBe("本群暂无已登记且被识别的成员");
 	});
 
-	it("群内正常聚合多用户并按昵称/username/user_id 回落展示", async () => {
+	it("按当地时间聚合示例，并使用伦敦夏令时的实际偏移", async () => {
+		vi.setSystemTime(new Date("2026-07-27T13:30:00.000Z"));
 		const chatId = "42";
-		const now = new Date();
-
-		await upsertUserTimezone(
-			env,
-			createProfile("1001", { username: "alice_u", firstName: "Alice", lastName: "Li" }),
-			"Asia/Shanghai",
-		);
-		await upsertUserTimezone(env, createProfile("1002", { username: "bob_u" }), "Europe/London");
-		await upsertUserTimezone(env, createProfile("1003", {}), "America/New_York");
-
-		await markSeen(env, chatId, createProfile("1001", { username: "alice_u", firstName: "Alice", lastName: "Li" }), 1000);
-		await markSeen(env, chatId, createProfile("1002", { username: "bob_u" }), 2000);
-		await markSeen(env, chatId, createProfile("1003", {}), 1500);
+		await registerSeenMember(chatId, "1001", "Asia/Shanghai", { firstName: "Alice" }, 5000);
+		await registerSeenMember(chatId, "1002", "Asia/Shanghai", { firstName: "Bob" }, 4000);
+		await registerSeenMember(chatId, "1003", "Asia/Shanghai", { firstName: "Carol" }, 3000);
+		await registerSeenMember(chatId, "1004", "Europe/London", { firstName: "Dave" }, 2000);
+		await registerSeenMember(chatId, "1005", "Europe/London", { firstName: "Eve" }, 1000);
 
 		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
 			async () => createTelegramOkResponse(),
@@ -224,37 +228,113 @@ describe("/tza", () => {
 
 		const response = await runWebhook(createTzaUpdate({ chatType: "group", messageId: 103 }));
 		expect(response.status).toBe(200);
-		expect(outboundFetch).toHaveBeenCalledTimes(1);
-
 		const [input, init] = outboundFetch.mock.calls[0];
 		const text = await readOutboundParam(input, init, "text");
 
-		const expectedLondon = formatLocalTime("Europe/London", now);
-		const expectedNewYork = formatLocalTime("America/New_York", now);
-		const expectedShanghai = formatLocalTime("Asia/Shanghai", now);
-		const expectedLondonOffset = formatUtcOffset("Europe/London", now);
-		const expectedNewYorkOffset = formatUtcOffset("America/New_York", now);
-		const expectedShanghaiOffset = formatUtcOffset("Asia/Shanghai", now);
+		expect(text).toBe(
+			[
+				"2026-07-27 · UTC+8 · 21:30",
+				"Asia/Shanghai：Alice、Bob、Carol",
+				"",
+				"2026-07-27 · UTC+1 · 14:30",
+				"Europe/London：Dave、Eve",
+			].join("\n"),
+		);
+	});
+
+	it("相同当地日期和时间但不同 IANA 时区时共用时间块并分行", async () => {
+		vi.setSystemTime(new Date("2026-07-27T13:30:00.000Z"));
+		const chatId = "42";
+		await registerSeenMember(chatId, "1101", "Asia/Shanghai", { firstName: "Alice" }, 2000);
+		await registerSeenMember(chatId, "1102", "Asia/Manila", { username: "bob_u" }, 1000);
+
+		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+			async () => createTelegramOkResponse(),
+		);
+		vi.stubGlobal("fetch", outboundFetch);
+		vi.spyOn(console, "log").mockImplementation(() => {});
+
+		await runWebhook(createTzaUpdate({ messageId: 104 }));
+		const [input, init] = outboundFetch.mock.calls[0];
+		const text = await readOutboundParam(input, init, "text");
 
 		expect(text).toBe(
 			[
-				expectedLondon.ok
-				? expectedLondonOffset.ok
-					? `${expectedLondonOffset.value} (${expectedLondon.value}) | @bob_u`
-					: `@bob_u: ${expectedLondonOffset.error}`
-				: `@bob_u: ${expectedLondon.error}`,
-				expectedNewYork.ok
-				? expectedNewYorkOffset.ok
-					? `${expectedNewYorkOffset.value} (${expectedNewYork.value}) | 1003`
-					: `1003: ${expectedNewYorkOffset.error}`
-				: `1003: ${expectedNewYork.error}`,
-				expectedShanghai.ok
-				? expectedShanghaiOffset.ok
-					? `${expectedShanghaiOffset.value} (${expectedShanghai.value}) | Alice Li`
-					: `Alice Li: ${expectedShanghaiOffset.error}`
-				: `Alice Li: ${expectedShanghai.error}`,
+				"2026-07-27 · UTC+8 · 21:30",
+				"Asia/Manila：@bob_u",
+				"Asia/Shanghai：Alice",
 			].join("\n"),
 		);
+	});
+
+	it("显示非整小时 UTC 偏移", async () => {
+		vi.setSystemTime(new Date("2026-07-27T13:30:00.000Z"));
+		await registerSeenMember("42", "1201", "Asia/Kathmandu", { firstName: "Nima" }, 1000);
+
+		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+			async () => createTelegramOkResponse(),
+		);
+		vi.stubGlobal("fetch", outboundFetch);
+		vi.spyOn(console, "log").mockImplementation(() => {});
+
+		await runWebhook(createTzaUpdate({ messageId: 105 }));
+		const [input, init] = outboundFetch.mock.calls[0];
+		const text = await readOutboundParam(input, init, "text");
+
+		expect(text).toBe(
+			[
+				"2026-07-27 · UTC+5:45 · 19:15",
+				"Asia/Kathmandu：Nima",
+			].join("\n"),
+		);
+	});
+
+	it("跨当地日期时拆成多个日期段", async () => {
+		vi.setSystemTime(new Date("2026-07-27T23:30:00.000Z"));
+		const chatId = "42";
+		await registerSeenMember(chatId, "1301", "Pacific/Kiritimati", { firstName: "Tomorrow" }, 2000);
+		await registerSeenMember(chatId, "1302", "America/Los_Angeles", { firstName: "Today" }, 1000);
+
+		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+			async () => createTelegramOkResponse(),
+		);
+		vi.stubGlobal("fetch", outboundFetch);
+		vi.spyOn(console, "log").mockImplementation(() => {});
+
+		await runWebhook(createTzaUpdate({ messageId: 106 }));
+		const [input, init] = outboundFetch.mock.calls[0];
+		const text = await readOutboundParam(input, init, "text");
+
+		expect(text).toBe(
+			[
+				"2026-07-28 · UTC+14 · 13:30",
+				"Pacific/Kiritimati：Tomorrow",
+				"",
+				"2026-07-27 · UTC-7 · 16:30",
+				"America/Los_Angeles：Today",
+			].join("\n"),
+		);
+	});
+
+	it("无效时区不会中断其他成员的聚合", async () => {
+		vi.setSystemTime(new Date("2026-07-27T13:30:00.000Z"));
+		const chatId = "42";
+		await registerSeenMember(chatId, "1401", "Asia/Shanghai", { firstName: "Alice" }, 2000);
+		await registerSeenMember(chatId, "1402", "Mars/Base", { firstName: "Broken" }, 1000);
+
+		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+			async () => createTelegramOkResponse(),
+		);
+		vi.stubGlobal("fetch", outboundFetch);
+		vi.spyOn(console, "log").mockImplementation(() => {});
+
+		await runWebhook(createTzaUpdate({ messageId: 107 }));
+		const [input, init] = outboundFetch.mock.calls[0];
+		const text = await readOutboundParam(input, init, "text");
+
+		expect(text).toContain("Asia/Shanghai：Alice");
+		expect(text).toContain("无效时区: Mars/Base：Broken");
+		expect(text).not.toContain("共 ");
 	});
 
 	it("超长消息时截断并提示剩余人数", async () => {
@@ -292,5 +372,15 @@ describe("/tza", () => {
 
 		const hiddenCount = Number(text?.match(/剩余\s+(\d+)\s+人未显示/)?.[1] ?? "0");
 		expect(hiddenCount).toBeGreaterThan(0);
+		const visibleCount = text?.match(/LongName_\d{3}/gu)?.length ?? 0;
+		expect(visibleCount + hiddenCount).toBe(140);
+		expect(text).not.toContain("共 ");
+
+		const lines = text?.split("\n") ?? [];
+		for (const [index, line] of lines.entries()) {
+			if (/^\d{4}-\d{2}-\d{2} · UTC[+-]/u.test(line)) {
+				expect(lines[index + 1]).toMatch(/^[A-Za-z_]+\//u);
+			}
+		}
 	});
 });

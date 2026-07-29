@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AI_MODEL } from '../src/config';
 import { initSchema, markSeen, upsertUserTimezone, type UserProfile } from '../src/db';
-import { formatLocalTime, formatUtcOffset } from '../src/time_format';
 import worker from '../src/index';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
@@ -214,10 +213,10 @@ describe('/tzm', () => {
 		const lines = String(text ?? '').split('\n');
 		expect(lines[0]).toMatch(/^解析为：/);
 
-		const local = formatLocalTime('Asia/Shanghai', targetDate);
-		const offset = formatUtcOffset('Asia/Shanghai', targetDate);
-		const expectedLine = local.ok && offset.ok ? `${offset.value} (${local.value}) | sender` : '';
-		expect(lines.slice(1).join('\n')).toBe(expectedLine);
+		expect(targetDate.toISOString()).toBe('2026-02-10T09:00:00.000Z');
+		expect(lines.slice(1).join('\n')).toBe(
+			['', '2026-02-10 · UTC+8 · 17:00', 'Asia/Shanghai：sender'].join('\n'),
+		);
 		expect(replyTo).toBe('101');
 	});
 
@@ -382,17 +381,52 @@ describe('/tzm', () => {
 		const lines = String(text ?? '').split('\n');
 		expect(lines[0]).toMatch(/^解析为：/);
 
-		const dublinLocal = formatLocalTime('Europe/Dublin', targetDate);
-		const dublinOffset = formatUtcOffset('Europe/Dublin', targetDate);
-		const shLocal = formatLocalTime('Asia/Shanghai', targetDate);
-		const shOffset = formatUtcOffset('Asia/Shanghai', targetDate);
+		expect(targetDate.toISOString()).toBe('2026-02-10T09:00:00.000Z');
+		expect(lines.slice(1).join('\n')).toBe(
+			[
+				'',
+				'2026-02-10 · UTC+8 · 17:00',
+				'Asia/Shanghai：Alice Li',
+				'',
+				'2026-02-10 · UTC+0 · 09:00',
+				'Europe/Dublin：@bob_u',
+			].join('\n'),
+		);
+	});
 
-		const expectedDublinLine =
-			dublinLocal.ok && dublinOffset.ok ? `${dublinOffset.value} (${dublinLocal.value}) | @bob_u` : '';
-		const expectedShanghaiLine =
-			shLocal.ok && shOffset.ok ? `${shOffset.value} (${shLocal.value}) | Alice Li` : '';
+	it('按解析时刻的实际当地时间聚合，并应用夏令时偏移', async () => {
+		const chatId = '42';
+		const members = [
+			{ id: '1001', name: 'Alice', timezone: 'Asia/Shanghai' },
+			{ id: '1002', name: 'Bob', timezone: 'Asia/Singapore' },
+			{ id: '1003', name: 'Dave', timezone: 'Europe/London' },
+		] as const;
+		for (const [index, member] of members.entries()) {
+			const profile = createProfile(member.id, { firstName: member.name });
+			await upsertUserTimezone(env, profile, member.timezone);
+			await markSeen(env, chatId, profile, 1000 + index);
+		}
 
-		expect(lines.slice(1).join('\n')).toBe([expectedShanghaiLine, expectedDublinLine].join('\n'));
+		const aiRun = vi.fn<AiRun>(async () => createAiToolCallResult({ timestamp: '2026-07-27T21:30:00', timezone: 'UTC+8' }));
+		const outboundFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+			async () => createTelegramOkResponse(),
+		);
+		vi.stubGlobal('fetch', outboundFetch);
+
+		await runWebhook(createTzmUpdate({ chatType: 'group', messageId: 122, senderId: 1001 }), { run: aiRun });
+
+		const [input, init] = outboundFetch.mock.calls[0];
+		const text = await readOutboundParam(input, init, 'text');
+		expect(text).toContain(
+			[
+				'2026-07-27 · UTC+8 · 21:30',
+				'Asia/Shanghai：Alice',
+				'Asia/Singapore：Bob',
+				'',
+				'2026-07-27 · UTC+1 · 14:30',
+				'Europe/London：Dave',
+			].join('\n'),
+		);
 	});
 
 	it('给 AI 提供请求者时区的当前日期，避免 UTC 日期导致“明天”偏移', async () => {

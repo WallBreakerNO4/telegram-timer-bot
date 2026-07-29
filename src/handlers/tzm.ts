@@ -4,8 +4,8 @@ import { AI_MODEL, AI_TIMEOUT_MS, LOCALE } from '../config';
 import { getUserTimezone, initSchema, listRegisteredSeenUsers, markSeen } from '../db';
 import { MSG_NEED_INIT, MSG_PRIVATE_OR_GROUP_ONLY, MSG_TZM_SINGLE_POINT_ONLY, MSG_TZM_USAGE } from '../messages';
 import { getDisplayName, getUserProfileFromMessageUser } from '../telegram_profiles';
-import { buildTzmMessage } from '../telegram_text';
-import { formatLocalTime, formatUtcOffset } from '../time_format';
+import { buildTzmMessage, type TzaMessageMember } from '../telegram_text';
+import { formatUtcOffset, formatZonedDateTime } from '../time_format';
 import {
   type AiCompat,
   isPeriodicExpression,
@@ -228,36 +228,41 @@ export function registerTzmHandler(bot: Bot, env: Env): void {
 
     const header = `解析为：${parsed.timestamp} (${parsed.timezone})`;
 
-    let lines: string[];
+    let members: TzaMessageMember[];
     if (isGroupChat) {
       const users = await listRegisteredSeenUsers(env, chatId);
-      lines = users.map((user) => {
-        const localTime = formatLocalTime(user.timezone, targetDate);
+      members = users.map((user) => {
+        const zonedDateTime = formatZonedDateTime(user.timezone, targetDate);
         const displayName = getDisplayName(user);
-        if (!localTime.ok) {
-          return `${displayName}: ${localTime.error}`;
+        if (!zonedDateTime.ok) {
+          return { ok: false, displayName, timezone: user.timezone, error: zonedDateTime.error };
         }
-        const utcOffset = formatUtcOffset(user.timezone, targetDate);
-        if (!utcOffset.ok) {
-          return `${displayName}: ${utcOffset.error}`;
-        }
-        return `${utcOffset.value} (${localTime.value}) | ${displayName}`;
+        return {
+          ok: true,
+          displayName,
+          timezone: user.timezone,
+          localDate: zonedDateTime.value.date,
+          localTime: zonedDateTime.value.time,
+          utcOffset: zonedDateTime.value.utcOffset,
+        };
       });
     } else {
-      const localTime = formatLocalTime(requesterTimezone, targetDate);
-      if (!localTime.ok) {
-        lines = [localTime.error];
+      const zonedDateTime = formatZonedDateTime(requesterTimezone, targetDate);
+      if (!zonedDateTime.ok) {
+        members = [{ ok: false, displayName: getDisplayName(requester), timezone: requesterTimezone, error: zonedDateTime.error }];
       } else {
-        const utcOffset = formatUtcOffset(requesterTimezone, targetDate);
-        if (!utcOffset.ok) {
-          lines = [utcOffset.error];
-        } else {
-          lines = [`${utcOffset.value} (${localTime.value}) | ${getDisplayName(requester)}`];
-        }
+        members = [{
+          ok: true,
+          displayName: getDisplayName(requester),
+          timezone: requesterTimezone,
+          localDate: zonedDateTime.value.date,
+          localTime: zonedDateTime.value.time,
+          utcOffset: zonedDateTime.value.utcOffset,
+        }];
       }
     }
 
-    const text = buildTzmMessage(header, lines);
+    const text = buildTzmMessage(header, members);
 
     await reply(text);
 
