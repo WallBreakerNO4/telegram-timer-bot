@@ -18,7 +18,7 @@ Vitest 测试套件目录，使用 `@cloudflare/vitest-pool-workers` 在 Workers
 | `db.spec.ts` | D1 数据库操作测试（schema 初始化、CRUD） |
 | `tz.spec.ts` | `/tz` 命令测试 |
 | `tza.spec.ts` | `/tza` 命令测试 |
-| `tzm.spec.ts` | `/tzm` 命令测试（含 AI 解析） |
+| `tzm.spec.ts` | `/tzm` 命令测试（含 OpenRouter 请求与 Structured Outputs 解析） |
 | `timezones.spec.ts` | 时区列表、区域、分页工具函数测试 |
 
 ## For AI Agents

@@ -52,6 +52,8 @@ Cloudflare Workers 上的 Telegram Bot，提供跨时区时间查询与自然语
 
 ### External
 - `grammy` ^1.x - Telegram Bot 框架
+- `openai` ^7.x - OpenAI 兼容 API 客户端（`/tzm` 通过 OpenRouter 调用）
+- `zod` ^4.x - `/tzm` Structured Outputs schema 与响应解析
 - `wrangler` ^4.x - Cloudflare Workers CLI
 - `vitest` ~3.2.x - 测试框架
 - `@cloudflare/vitest-pool-workers` ^0.12.x - Workers 测试适配
@@ -63,7 +65,7 @@ Cloudflare Workers 上的 Telegram Bot，提供跨时区时间查询与自然语
 - Cloudflare Workers 上的 Telegram Bot（Wrangler 部署）
 - 私聊：`/start`、`/changetz` 通过 Inline Keyboard 选择并保存 IANA 时区
 - 群聊：`/tz` 查自己或 reply 目标的当地时间；`/tza` 汇总本群已登记且"见过"的成员当地时间
-- `/tzm`：把自然语言时间解析为单次时间点，并按成员时区展示（需要 Cloudflare `AI` binding）
+- `/tzm`：通过 OpenRouter Structured Outputs 把自然语言时间解析为单次时间点，并按成员时区展示
 - 存储：Cloudflare D1（表 `users` / `chat_users`）
 
 ## 项目概览与关键文件
@@ -168,9 +170,9 @@ Workers pool：
 - 新增表/字段时：先加 `migrations/xxxx_*.sql`，再同步更新 `src/db.ts:initSchema`
 
 ### Cloudflare env / secrets
-- 必需 secret：`SECRET_TELEGRAM_API_TOKEN`（声明在 `src/env.d.ts`）
+- 必需 secret：`SECRET_TELEGRAM_API_TOKEN`、`OPENROUTER_API_KEY`（声明在 `src/env.d.ts`）
 - D1 binding：`DB`（见 `wrangler.jsonc` 与 `worker-configuration.d.ts`）
-- AI binding：`AI`（用于 `/tzm`，见 `wrangler.jsonc`）
+- OpenRouter 模型：`OPENROUTER_MODEL`（非敏感 Wrangler var；模型必须支持 Structured Outputs）
 - 不要提交真实 token；生产用 Wrangler secrets
 - 本地敏感信息放 `.dev.vars*` / `.env*`（仓库已在 `.gitignore` 中忽略，保留 `*.example`）
 

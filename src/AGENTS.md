@@ -20,7 +20,7 @@
 | `telegram_webhook.ts` | Telegram webhook 设置逻辑 |
 | `time_format.ts` | 纯函数：时区本地时间格式化、UTC 偏移计算（使用 `Intl.DateTimeFormat`） |
 | `timezones.ts` | 纯函数：获取运行时支持的 IANA 时区列表、区域列表、分页 |
-| `tzm_ai.ts` | `/tzm` AI 相关：system prompt、AI 响应解析、周期表达式检测 |
+| `tzm_ai.ts` | `/tzm` AI 相关：system prompt、Zod Structured Outputs schema、业务校验、周期表达式检测 |
 
 ## Subdirectories
 
@@ -54,4 +54,6 @@
 
 ### External
 - `grammy` - Telegram Bot 框架（提供 `Bot`、`Context`、Cloudflare webhook 适配器）
-- Cloudflare Workers runtime - `Intl.supportedValuesOf`、D1、AI bindings
+- `openai` - 通过 OpenRouter OpenAI 兼容端点执行 `/tzm` 推理
+- `zod` - 生成 strict JSON Schema 并解析 Structured Outputs
+- Cloudflare Workers runtime - `Intl.supportedValuesOf`、D1、outbound `fetch`

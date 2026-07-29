@@ -3,56 +3,54 @@
  * https://developers.cloudflare.com/workers/wrangler/configuration/
  */
 {
-    "$schema": "node_modules/wrangler/config-schema.json",
-    "name": "telegram-timer-bot",
-    "main": "src/index.ts",
-    "compatibility_date": "2025-09-27",
-    "observability": {
-        "enabled": true
-    },
-    "compatibility_flags": [
-        "nodejs_compat"
-    ],
-    /**
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "telegram-timer-bot",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-27",
+  "observability": {
+    "enabled": true
+  },
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  /**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
 	 */
-    // "placement": {  "mode": "smart" }
-    /**
+  // "placement": {  "mode": "smart" }
+  /**
 	 * Bindings
 	 * Bindings allow your Worker to interact with resources on the Cloudflare Developer Platform, including
 	 * databases, object storage, AI inference, real-time communication and more.
 	 * https://developers.cloudflare.com/workers/runtime-apis/bindings/
 	 */
-    "d1_databases": [
-        {
-            "binding": "DB",
-            "database_name": "telegram_timezone_bot",
-            "database_id": "fe6bde2e-cceb-4fc9-b9cc-675272fb217b",
-            "migrations_dir": "migrations"
-        }
-    ],
-    "ai": {
-        "binding": "AI"
-    },
-    /**
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "telegram_timezone_bot",
+      "database_id": "fe6bde2e-cceb-4fc9-b9cc-675272fb217b",
+      "migrations_dir": "migrations"
+    }
+  ],
+  /**
 	 * Environment Variables
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
 	 * Note: Use secrets to store sensitive data.
 	 * https://developers.cloudflare.com/workers/configuration/secrets/
 	 */
-    // "vars": {  "MY_VARIABLE": "production_value" }
-    "vars": {
-        "TELEGRAM_BOT_USERNAME": "WallBreakerNO4_Timer_bot"
-    }
-    /**
+  // "vars": {  "MY_VARIABLE": "production_value" }
+  "vars": {
+    "TELEGRAM_BOT_USERNAME": "WallBreakerNO4_Timer_bot",
+    "OPENROUTER_MODEL": "deepseek/deepseek-v4-flash"
+  }
+  /**
 	 * Static Assets
 	 * https://developers.cloudflare.com/workers/static-assets/binding/
 	 */
-    // "assets": {  "directory": "./public/",  "binding": "ASSETS" }
-    /**
+  // "assets": {  "directory": "./public/",  "binding": "ASSETS" }
+  /**
 	 * Service Bindings (communicate between multiple Workers)
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
 	 */
-    // "services": [  {   "binding": "MY_SERVICE",   "service": "my-service"  } ]
+  // "services": [  {   "binding": "MY_SERVICE",   "service": "my-service"  } ]
 }

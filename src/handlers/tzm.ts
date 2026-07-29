@@ -1,24 +1,32 @@
 import { type Bot, type Context } from 'grammy';
+import OpenAI from 'openai';
+import { zodResponseFormat } from 'openai/helpers/zod';
+import { type ChatCompletionParseParams } from 'openai/resources/chat/completions';
 
-import { AI_MODEL, AI_TIMEOUT_MS, LOCALE } from '../config';
+import { AI_TIMEOUT_MS, LOCALE, OPENROUTER_BASE_URL } from '../config';
 import { getUserTimezone, initSchema, listRegisteredSeenUsers, markSeen } from '../db';
 import { MSG_NEED_INIT, MSG_PRIVATE_OR_GROUP_ONLY, MSG_TZM_SINGLE_POINT_ONLY, MSG_TZM_USAGE } from '../messages';
 import { getDisplayName, getUserProfileFromMessageUser } from '../telegram_profiles';
 import { buildTzmMessage, type TzaMessageMember } from '../telegram_text';
 import { formatUtcOffset, formatZonedDateTime } from '../time_format';
 import {
-  type AiCompat,
   isPeriodicExpression,
-  parseTzmAiResponse,
-  runWithTimeout,
   toIsoOffset,
   TZM_AI_INFERENCE_OPTIONS,
+  TZM_PARSE_SCHEMA,
   TZM_SYSTEM_PROMPT,
-  TZM_TOOL,
+  validateTzmParseResult,
 } from '../tzm_ai';
 
 const SPLIT_REGEX = /\s+/u;
 const HOUR_CYCLE = 'h23' as const;
+
+type OpenRouterChatCompletionParams = ChatCompletionParseParams & {
+  provider: {
+    require_parameters: true;
+    allow_fallbacks: false;
+  };
+};
 
 function parseCommandExpression(text: string | undefined): string {
   if (!text) {
@@ -178,52 +186,70 @@ export function registerTzmHandler(bot: Bot, env: Env): void {
       }
     }
 
-    const ai = (env as Env & { AI?: AiCompat }).AI;
-    if (!ai) {
-      throw new Error('Missing Cloudflare AI binding');
+    if (!env.OPENROUTER_API_KEY) {
+      throw new Error('Missing OPENROUTER_API_KEY');
+    }
+    if (!env.OPENROUTER_MODEL) {
+      throw new Error('Missing OPENROUTER_MODEL');
     }
 
-    const aiResult = await runWithTimeout(
-      ai.run(AI_MODEL, {
-        messages: [
-          {
-            role: 'system',
-            content: TZM_SYSTEM_PROMPT,
-          },
-          {
-            role: 'user',
-            content: JSON.stringify({
-              expression,
-              user: {
-                name: getDisplayName(requester),
-                username: requester.username ? `@${requester.username}` : null,
-                timezone: parserTimezone,
-                localTime: userLocalTime,
-              },
-              currentTimeUtc: nowIso,
-              context: contextMessages,
-            }),
-          },
-        ],
-        tools: [TZM_TOOL],
-        ...TZM_AI_INFERENCE_OPTIONS,
-      }),
-      AI_TIMEOUT_MS,
-    );
+    const client = new OpenAI({
+      apiKey: env.OPENROUTER_API_KEY,
+      baseURL: OPENROUTER_BASE_URL,
+      timeout: AI_TIMEOUT_MS,
+      maxRetries: 0,
+    });
 
-    const parsedResult = parseTzmAiResponse(aiResult);
+    const chatCompletionParams = {
+      model: env.OPENROUTER_MODEL,
+      messages: [
+        {
+          role: 'system',
+          content: TZM_SYSTEM_PROMPT,
+        },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            expression,
+            user: {
+              name: getDisplayName(requester),
+              username: requester.username ? `@${requester.username}` : null,
+              timezone: parserTimezone,
+              localTime: userLocalTime,
+            },
+            currentTimeUtc: nowIso,
+            context: contextMessages,
+          }),
+        },
+      ],
+      response_format: zodResponseFormat(TZM_PARSE_SCHEMA, 'tzm_parse_result'),
+      provider: {
+        require_parameters: true,
+        allow_fallbacks: false,
+      },
+      ...TZM_AI_INFERENCE_OPTIONS,
+    } satisfies OpenRouterChatCompletionParams;
+
+    const completion = await client.chat.completions.parse(chatCompletionParams);
+
+    const structuredResult = completion.choices[0]?.message.parsed;
+    if (!structuredResult) {
+      throw new Error('OpenRouter did not return a structured time parse result');
+    }
+
+    const parsedResult = validateTzmParseResult(structuredResult);
     if (!parsedResult.ok) {
-      throw new Error('Invalid time parse response from Cloudflare AI');
+      throw new Error('OpenRouter returned an inconsistent time parse result');
     }
     const parsed = parsedResult.value;
 
     if (!parsed.timestamp) {
-      throw new Error('Cloudflare AI could not resolve the expression to a single timestamp');
+      throw new Error('OpenRouter could not resolve the expression to a single timestamp');
     }
 
     const targetDate = new Date(`${parsed.timestamp}${toIsoOffset(parsed.timezone)}`);
     if (Number.isNaN(targetDate.getTime())) {
-      throw new Error(`Cloudflare AI returned an invalid timestamp: ${parsed.timestamp}`);
+      throw new Error(`OpenRouter returned an invalid timestamp: ${parsed.timestamp}`);
     }
 
     const header = `解析为：${parsed.timestamp} (${parsed.timezone})`;

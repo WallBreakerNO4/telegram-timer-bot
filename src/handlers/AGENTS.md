@@ -15,7 +15,7 @@ Telegram Bot 的命令（command）与回调（callback）处理器，每个文�
 | `timezone_keyboard.ts` | Inline Keyboard 视图层：区域选择器、时区分页列表、按钮编码 |
 | `tz.ts` | `/tz` 命令：查询自己或 reply 目标的当地时间（含 UTC 偏移） |
 | `tza.ts` | `/tza` 命令：汇总群聊中已登记且"见过"的成员当地时间（带截断） |
-| `tzm.ts` | `/tzm` 命令：自然语言时间→AI 解析→按成员时区展示；支持回复他人消息解析 |
+| `tzm.ts` | `/tzm` 命令：自然语言时间→OpenRouter Structured Outputs→按成员时区展示；支持回复他人消息解析 |
 
 ## For AI Agents
 
@@ -50,3 +50,4 @@ Telegram Bot 的命令（command）与回调（callback）处理器，每个文�
 
 ### External
 - `grammy` - `Bot`、`Context`
+- `openai` - OpenRouter 的 OpenAI 兼容客户端与 Structured Outputs parser
