@@ -5,6 +5,7 @@ import { MSG_GROUP_ONLY } from '../messages';
 import { getDisplayName } from '../telegram_profiles';
 import { buildTzaMessage, type TzaMessageMember } from '../telegram_text';
 import { formatZonedDateTime } from '../time_format';
+import { sendEphemeralReply } from './ephemeral_reply';
 
 export function registerTzaHandler(bot: Bot, env: Env): void {
   bot.command('tza', async (ctx: Context) => {
@@ -16,8 +17,8 @@ export function registerTzaHandler(bot: Bot, env: Env): void {
     const chatId = String(message.chat.id);
 
     if (message.chat.type !== 'group' && message.chat.type !== 'supergroup') {
-      await ctx.reply(MSG_GROUP_ONLY, {
-        reply_parameters: { message_id: message.message_id },
+      await sendEphemeralReply(ctx, env, MSG_GROUP_ONLY, {
+        replyToMessageId: message.message_id,
       });
       return new Response('ok');
     }
@@ -47,8 +48,9 @@ export function registerTzaHandler(bot: Bot, env: Env): void {
     });
     const text = buildTzaMessage(members);
 
-    await ctx.reply(text, {
-      reply_parameters: { message_id: message.message_id },
+    await sendEphemeralReply(ctx, env, text, {
+      replyToMessageId: message.message_id,
+      withShareButton: true,
     });
 
     return new Response('ok');

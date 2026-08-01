@@ -7,18 +7,21 @@ export const ACTION_REGION = "r";
 export const ACTION_PAGE = "p";
 export const ACTION_BACK = "b";
 export const ACTION_TIMEZONE = "t";
+export const ACTION_SHARE = "s";
 
 type CallbackAction =
   | typeof ACTION_REGION
   | typeof ACTION_PAGE
   | typeof ACTION_BACK
-  | typeof ACTION_TIMEZONE;
+  | typeof ACTION_TIMEZONE
+  | typeof ACTION_SHARE;
 
 export type CallbackPayload =
   | { action: typeof ACTION_REGION; region: string }
   | { action: typeof ACTION_PAGE; region: string; page: number; pageSize: number }
   | { action: typeof ACTION_BACK; region: string; page: number; pageSize: number }
-  | { action: typeof ACTION_TIMEZONE; timezone: string };
+  | { action: typeof ACTION_TIMEZONE; timezone: string }
+  | { action: typeof ACTION_SHARE; id: string };
 
 export type CallbackDecodeErrorCode =
   | "too_long"
@@ -26,7 +29,8 @@ export type CallbackDecodeErrorCode =
   | "unknown_action"
   | "invalid_page"
   | "invalid_page_size"
-  | "invalid_timezone";
+  | "invalid_timezone"
+  | "invalid_share_id";
 
 export type CallbackDecodeResult =
   | { ok: true; value: CallbackPayload }
@@ -58,7 +62,8 @@ function isKnownAction(action: string): action is CallbackAction {
     action === ACTION_REGION ||
     action === ACTION_PAGE ||
     action === ACTION_BACK ||
-    action === ACTION_TIMEZONE
+    action === ACTION_TIMEZONE ||
+    action === ACTION_SHARE
   );
 }
 
@@ -80,6 +85,9 @@ export function encodeCallbackData(payload: CallbackPayload): string {
       break;
     case ACTION_TIMEZONE:
       data = [ACTION_TIMEZONE, payload.timezone].join("|");
+      break;
+    case ACTION_SHARE:
+      data = [ACTION_SHARE, payload.id].join("|");
       break;
     default:
       throw new Error("Unsupported callback action");
@@ -111,6 +119,13 @@ export function decodeCallbackData(
       return toError("invalid_format", "region callback_data format is invalid");
     }
     return { ok: true, value: { action, region: parts[1] } };
+  }
+
+  if (action === ACTION_SHARE) {
+    if (parts.length !== 2 || !parts[1]) {
+      return toError("invalid_share_id", "share callback_data format is invalid");
+    }
+    return { ok: true, value: { action, id: parts[1] } };
   }
 
   if (action === ACTION_PAGE || action === ACTION_BACK) {

@@ -162,6 +162,17 @@ async function readReplyMessageId(input: RequestInfo | URL, init: RequestInit | 
   return replyParameters.message_id === undefined ? null : String(replyParameters.message_id);
 }
 
+async function readShareButton(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+): Promise<{ text: string; callback_data: string } | null> {
+  const raw = await readOutboundParam(input, init, "reply_markup");
+  if (!raw) return null;
+
+  const markup = JSON.parse(raw) as { inline_keyboard?: Array<Array<{ text: string; callback_data: string }>> };
+  return markup.inline_keyboard?.[0]?.[0] ?? null;
+}
+
 beforeEach(async () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-01-02T03:04:00.000Z"));
@@ -169,6 +180,7 @@ beforeEach(async () => {
   await initSchema(env);
   await env.DB.prepare("DELETE FROM chat_users").run();
   await env.DB.prepare("DELETE FROM users").run();
+  await env.DB.prepare("DELETE FROM ephemeral_shares").run();
 });
 
 afterEach(() => {
@@ -195,6 +207,8 @@ describe("/tz", () => {
 
     const [input, init] = outboundFetch.mock.calls[0];
     const text = await readOutboundParam(input, init, "text");
+    const receiverUserId = await readOutboundParam(input, init, "receiver_user_id");
+    const shareButton = await readShareButton(input, init);
     const now = new Date();
     const expectedTime = formatLocalTime("Asia/Shanghai", now);
     const expectedOffset = formatUtcOffset("Asia/Shanghai", now);
@@ -207,6 +221,15 @@ describe("/tz", () => {
       expected = `${expectedOffset.value} (${expectedTime.value}) | sender`;
     }
     expect(text).toBe(expected);
+    expect(receiverUserId).toBe("7");
+    expect(shareButton).toEqual({ text: "分享到群聊", callback_data: expect.stringMatching(/^s\|/) });
+
+    const shareRows = await env.DB.prepare(
+      "SELECT chat_id, receiver_user_id, text FROM ephemeral_shares",
+    ).all<{ chat_id: string; receiver_user_id: string; text: string }>();
+    expect(shareRows.results ?? []).toEqual([
+      { chat_id: "42", receiver_user_id: "7", text: expected },
+    ]);
   });
 
   it("自查：未 reply 时查发送者并回复命令消息，群聊写入 sender seen", async () => {
@@ -225,6 +248,7 @@ describe("/tz", () => {
     const [input, init] = outboundFetch.mock.calls[0];
     const text = await readOutboundParam(input, init, "text");
     const replyTo = await readReplyMessageId(input, init);
+    const receiverUserId = await readOutboundParam(input, init, "receiver_user_id");
     const now = new Date();
     const expectedTime = formatLocalTime("Asia/Shanghai", now);
     const expectedOffset = formatUtcOffset("Asia/Shanghai", now);
@@ -239,6 +263,7 @@ describe("/tz", () => {
 
     expect(text).toBe(expected);
     expect(replyTo).toBe("101");
+    expect(receiverUserId).toBe("7");
 
     const seenRows = await env.DB.prepare(
       "SELECT user_id FROM chat_users WHERE chat_id = ? ORDER BY user_id ASC",
@@ -274,6 +299,7 @@ describe("/tz", () => {
     const [input, init] = outboundFetch.mock.calls[0];
     const text = await readOutboundParam(input, init, "text");
     const replyTo = await readReplyMessageId(input, init);
+    const receiverUserId = await readOutboundParam(input, init, "receiver_user_id");
     const now = new Date();
     const expectedTime = formatLocalTime("Europe/London", now);
     const expectedOffset = formatUtcOffset("Europe/London", now);
@@ -288,6 +314,7 @@ describe("/tz", () => {
 
     expect(text).toBe(expected);
     expect(replyTo).toBe("188");
+    expect(receiverUserId).toBe("7");
 
     const seenRows = await env.DB.prepare(
       "SELECT user_id FROM chat_users WHERE chat_id = ? ORDER BY user_id ASC",
@@ -312,8 +339,12 @@ describe("/tz", () => {
     const [input, init] = outboundFetch.mock.calls[0];
     const text = await readOutboundParam(input, init, "text");
     const replyTo = await readReplyMessageId(input, init);
+    const receiverUserId = await readOutboundParam(input, init, "receiver_user_id");
+    const shareButton = await readShareButton(input, init);
 
     expect(text).toBe("请私聊 bot 用 /start 初始化");
     expect(replyTo).toBe("301");
+    expect(receiverUserId).toBeNull();
+    expect(shareButton).toBeNull();
   });
 });

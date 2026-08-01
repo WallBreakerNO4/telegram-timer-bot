@@ -17,6 +17,7 @@ import {
   TZM_SYSTEM_PROMPT,
   validateTzmParseResult,
 } from '../tzm_ai';
+import { sendEphemeralReply } from './ephemeral_reply';
 
 const SPLIT_REGEX = /\s+/u;
 const HOUR_CYCLE = 'h23' as const;
@@ -104,9 +105,10 @@ export function registerTzmHandler(bot: Bot, env: Env): void {
     const isGroupChat = chatType === 'group' || chatType === 'supergroup';
     const isPrivateChat = chatType === 'private';
     const replyToMessageId = message.reply_to_message?.message_id ?? message.message_id;
-    const reply = async (text: string): Promise<void> => {
-      await ctx.reply(text, {
-        reply_parameters: { message_id: replyToMessageId },
+    const reply = async (text: string, withShareButton = false): Promise<void> => {
+      await sendEphemeralReply(ctx, env, text, {
+        replyToMessageId,
+        withShareButton,
       });
     };
 
@@ -290,7 +292,7 @@ export function registerTzmHandler(bot: Bot, env: Env): void {
 
     const text = buildTzmMessage(header, members);
 
-    await reply(text);
+    await reply(text, true);
 
     return new Response('ok');
   });

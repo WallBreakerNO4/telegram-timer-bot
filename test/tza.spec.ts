@@ -142,6 +142,17 @@ async function readReplyMessageId(input: RequestInfo | URL, init: RequestInit | 
 	return replyParameters.message_id === undefined ? null : String(replyParameters.message_id);
 }
 
+async function readShareButton(
+	input: RequestInfo | URL,
+	init: RequestInit | undefined,
+): Promise<{ text: string; callback_data: string } | null> {
+	const raw = await readOutboundParam(input, init, "reply_markup");
+	if (!raw) return null;
+
+	const markup = JSON.parse(raw) as { inline_keyboard?: Array<Array<{ text: string; callback_data: string }>> };
+	return markup.inline_keyboard?.[0]?.[0] ?? null;
+}
+
 beforeEach(async () => {
 	vi.useFakeTimers();
 	vi.setSystemTime(new Date("2026-01-02T03:04:00.000Z"));
@@ -149,6 +160,7 @@ beforeEach(async () => {
 	await initSchema(env);
 	await env.DB.prepare("DELETE FROM chat_users").run();
 	await env.DB.prepare("DELETE FROM users").run();
+	await env.DB.prepare("DELETE FROM ephemeral_shares").run();
 });
 
 afterEach(() => {
@@ -190,9 +202,13 @@ describe("/tza", () => {
 		const [input, init] = outboundFetch.mock.calls[0];
 		const text = await readOutboundParam(input, init, "text");
 		const replyTo = await readReplyMessageId(input, init);
+		const receiverUserId = await readOutboundParam(input, init, "receiver_user_id");
+		const shareButton = await readShareButton(input, init);
 
 		expect(text).toBe("仅群聊可用");
 		expect(replyTo).toBe("101");
+		expect(receiverUserId).toBeNull();
+		expect(shareButton).toBeNull();
 	});
 
 	it("群内无已登记且被识别成员时返回空列表提示", async () => {
@@ -208,7 +224,18 @@ describe("/tza", () => {
 
 		const [input, init] = outboundFetch.mock.calls[0];
 		const text = await readOutboundParam(input, init, "text");
+		const receiverUserId = await readOutboundParam(input, init, "receiver_user_id");
+		const shareButton = await readShareButton(input, init);
 		expect(text).toBe("本群暂无已登记且被识别的成员");
+		expect(receiverUserId).toBe("7");
+		expect(shareButton).toEqual({ text: "分享到群聊", callback_data: expect.stringMatching(/^s\|/) });
+
+		const shareRows = await env.DB.prepare(
+			"SELECT chat_id, receiver_user_id, text FROM ephemeral_shares",
+		).all<{ chat_id: string; receiver_user_id: string; text: string }>();
+		expect(shareRows.results ?? []).toEqual([
+			{ chat_id: "42", receiver_user_id: "7", text: "本群暂无已登记且被识别的成员" },
+		]);
 	});
 
 	it("按当地时间聚合示例，并使用伦敦夏令时的实际偏移", async () => {
@@ -230,6 +257,7 @@ describe("/tza", () => {
 		expect(response.status).toBe(200);
 		const [input, init] = outboundFetch.mock.calls[0];
 		const text = await readOutboundParam(input, init, "text");
+		const receiverUserId = await readOutboundParam(input, init, "receiver_user_id");
 
 		expect(text).toBe(
 			[
@@ -240,6 +268,7 @@ describe("/tza", () => {
 				"Europe/London：Dave、Eve",
 			].join("\n"),
 		);
+		expect(receiverUserId).toBe("7");
 	});
 
 	it("相同当地日期和时间但不同 IANA 时区时共用时间块并分行", async () => {

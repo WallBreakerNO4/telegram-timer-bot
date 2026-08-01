@@ -219,6 +219,17 @@ async function readReplyMessageId(input: RequestInfo | URL, init: RequestInit | 
 	return replyParameters.message_id === undefined ? null : String(replyParameters.message_id);
 }
 
+async function readShareButton(
+	input: RequestInfo | URL,
+	init: RequestInit | undefined,
+): Promise<{ text: string; callback_data: string } | null> {
+	const raw = await readOutboundParam(input, init, 'reply_markup');
+	if (!raw) return null;
+
+	const markup = JSON.parse(raw) as { inline_keyboard?: Array<Array<{ text: string; callback_data: string }>> };
+	return markup.inline_keyboard?.[0]?.[0] ?? null;
+}
+
 beforeEach(async () => {
 	vi.useFakeTimers();
 	vi.setSystemTime(new Date('2026-01-02T03:04:00.000Z'));
@@ -226,6 +237,7 @@ beforeEach(async () => {
 	await initSchema(env);
 	await env.DB.prepare('DELETE FROM chat_users').run();
 	await env.DB.prepare('DELETE FROM users').run();
+	await env.DB.prepare('DELETE FROM ephemeral_shares').run();
 });
 
 afterEach(() => {
@@ -250,6 +262,7 @@ describe('/tzm', () => {
 		const [input, init] = findOutboundCall(outboundFetch, 'api.telegram.org');
 		const text = await readOutboundParam(input, init, 'text');
 		const replyTo = await readReplyMessageId(input, init);
+		const receiverUserId = await readOutboundParam(input, init, 'receiver_user_id');
 		expect(text).not.toBeNull();
 		const lines = String(text ?? '').split('\n');
 		expect(lines[0]).toMatch(/^解析为：/);
@@ -259,6 +272,7 @@ describe('/tzm', () => {
 			['', '2026-02-10 · UTC+8 · 17:00', 'Asia/Shanghai：sender'].join('\n'),
 		);
 		expect(replyTo).toBe('101');
+		expect(receiverUserId).toBeNull();
 	});
 
 	it('群聊中带 bot username 的定向命令会进入 /tzm handler', async () => {
@@ -293,8 +307,12 @@ describe('/tzm', () => {
 		const [input, init] = findOutboundCall(outboundFetch, 'api.telegram.org');
 		const text = await readOutboundParam(input, init, 'text');
 		const replyTo = await readReplyMessageId(input, init);
+		const receiverUserId = await readOutboundParam(input, init, 'receiver_user_id');
+		const shareButton = await readShareButton(input, init);
 		expect(text).toBe('请私聊 bot 用 /start 初始化');
 		expect(replyTo).toBe('102');
+		expect(receiverUserId).toBe('77');
+		expect(shareButton).toBeNull();
 	});
 
 	it.each([
@@ -419,6 +437,8 @@ describe('/tzm', () => {
 
 		const [input, init] = findOutboundCall(outboundFetch, 'api.telegram.org');
 		const text = await readOutboundParam(input, init, 'text');
+		const receiverUserId = await readOutboundParam(input, init, 'receiver_user_id');
+		const shareButton = await readShareButton(input, init);
 		expect(text).not.toBeNull();
 
 		const lines = String(text ?? '').split('\n');
@@ -435,6 +455,14 @@ describe('/tzm', () => {
 				'Europe/Dublin：@bob_u',
 			].join('\n'),
 		);
+		expect(receiverUserId).toBe('1001');
+		expect(shareButton).toEqual({ text: '分享到群聊', callback_data: expect.stringMatching(/^s\|/) });
+
+		const shareRows = await env.DB.prepare(
+			'SELECT chat_id, receiver_user_id, text FROM ephemeral_shares',
+		).all<{ chat_id: string; receiver_user_id: string; text: string }>();
+		expect(shareRows.results ?? []).toHaveLength(1);
+		expect(shareRows.results?.[0]).toMatchObject({ chat_id: '42', receiver_user_id: '1001' });
 	});
 
 	it('按解析时刻的实际当地时间聚合，并应用夏令时偏移', async () => {
@@ -549,7 +577,11 @@ describe('/tzm', () => {
 
 		const [input, init] = findOutboundCall(outboundFetch, 'api.telegram.org');
 		const text = await readOutboundParam(input, init, 'text');
+		const receiverUserId = await readOutboundParam(input, init, 'receiver_user_id');
+		const shareButton = await readShareButton(input, init);
 		expect(text).toBe('仅支持单次时间点');
+		expect(receiverUserId).toBe('1001');
+		expect(shareButton).toBeNull();
 	});
 
 	it('超长消息时保留 header 首行并追加截断尾注，且总长度不超过 4096', async () => {

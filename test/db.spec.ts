@@ -1,6 +1,10 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  createEphemeralShare,
+  deleteEphemeralShare,
+  EPHEMERAL_SHARE_TTL_MS,
+  getEphemeralShare,
   getUserTimezone,
   initSchema,
   listRegisteredSeenUsers,
@@ -27,6 +31,7 @@ describe("db repo", () => {
     await initSchema(env);
     await env.DB.prepare("DELETE FROM chat_users").run();
     await env.DB.prepare("DELETE FROM users").run();
+    await env.DB.prepare("DELETE FROM ephemeral_shares").run();
   });
 
   it("upsertUserTimezone + getUserTimezone works with string ids", async () => {
@@ -100,5 +105,45 @@ describe("db repo", () => {
         lastSeenAt: 1700000000300,
       },
     ]);
+  });
+
+  it("createEphemeralShare + getEphemeralShare + deleteEphemeralShare works", async () => {
+    const chatId = id("c");
+    const receiverUserId = id("u");
+    const shareId = await createEphemeralShare(
+      env,
+      { chatId, receiverUserId, text: "hello share" },
+      1700000000000,
+    );
+
+    const share = await getEphemeralShare(env, shareId);
+    expect(share).toEqual({
+      id: shareId,
+      chatId,
+      receiverUserId,
+      text: "hello share",
+      createdAt: 1700000000000,
+    });
+
+    await expect(deleteEphemeralShare(env, shareId)).resolves.toBe(true);
+    await expect(deleteEphemeralShare(env, shareId)).resolves.toBe(false);
+    await expect(getEphemeralShare(env, shareId)).resolves.toBeNull();
+  });
+
+  it("createEphemeralShare 顺带清理超过 TTL 的过期记录", async () => {
+    const oldId = await createEphemeralShare(
+      env,
+      { chatId: id("c"), receiverUserId: id("u"), text: "old" },
+      1000,
+    );
+    const freshId = await createEphemeralShare(
+      env,
+      { chatId: id("c"), receiverUserId: id("u"), text: "fresh" },
+      1000 + EPHEMERAL_SHARE_TTL_MS + 1,
+    );
+
+    await expect(getEphemeralShare(env, oldId)).resolves.toBeNull();
+    const fresh = await getEphemeralShare(env, freshId);
+    expect(fresh?.text).toBe("fresh");
   });
 });

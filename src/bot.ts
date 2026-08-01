@@ -38,7 +38,7 @@ export function createBot(token: string, env: Env): Bot {
   const botInfo = getConfiguredBotInfo(token, env.TELEGRAM_BOT_USERNAME);
   const bot = new Bot(token, { botInfo });
 
-  registerStartHandlers(bot, supportedTimezones);
+  registerStartHandlers(bot, env, supportedTimezones);
   registerTzHandler(bot, env);
   registerTzaHandler(bot, env);
   registerTzmHandler(bot, env);

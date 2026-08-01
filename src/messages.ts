@@ -15,6 +15,11 @@ export const MSG_USER_MISSING = '用户信息缺失，请重试';
 export const MSG_TIMEZONE_SET_DONE = '时区设置完成：{tz}';
 export const MSG_TIMEZONE_SAVED = '时区已保存';
 
+// 分享到群聊
+export const MSG_SHARE_TO_GROUP = '分享到群聊';
+export const MSG_SHARED = '已分享到群聊';
+export const MSG_SHARE_EXPIRED = '消息已失效或已分享';
+
 // 时区键盘按钮
 export const MSG_PREV_PAGE = '上一页';
 export const MSG_NEXT_PAGE = '下一页';

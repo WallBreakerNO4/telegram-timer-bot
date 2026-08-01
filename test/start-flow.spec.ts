@@ -176,6 +176,8 @@ describe("/start 与 callback 单消息流", () => {
 	    const parsed = new URL(callUrl);
 	    expect(parsed.pathname).toContain("/sendMessage");
 	    expect(await readOutboundParam(input, init, "text")).toBe("请私聊我使用 /start");
+	    expect(await readOutboundParam(input, init, "receiver_user_id")).toBe("7");
+	    expect(await readOutboundParam(input, init, "reply_markup")).toBeNull();
   });
 
   it("start -> 区域 -> 时区 会写入 DB 且每次 callback 都 answer", async () => {

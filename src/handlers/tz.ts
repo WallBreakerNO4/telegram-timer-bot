@@ -4,6 +4,7 @@ import { getUserTimezone, initSchema, markSeen } from '../db';
 import { MSG_NEED_INIT } from '../messages';
 import { getDisplayName, getUserProfileFromMessageUser } from '../telegram_profiles';
 import { formatLocalTime, formatUtcOffset } from '../time_format';
+import { sendEphemeralReply } from './ephemeral_reply';
 
 export function registerTzHandler(bot: Bot, env: Env): void {
   bot.command('tz', async (ctx: Context) => {
@@ -48,8 +49,9 @@ export function registerTzHandler(bot: Bot, env: Env): void {
         })()
       : MSG_NEED_INIT;
 
-    await ctx.reply(text, {
-      reply_parameters: { message_id: replyToMessageId },
+    await sendEphemeralReply(ctx, env, text, {
+      replyToMessageId,
+      withShareButton: Boolean(timezone),
     });
 
     return new Response('ok');
