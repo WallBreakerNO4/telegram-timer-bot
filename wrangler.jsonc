@@ -41,7 +41,7 @@
   // "vars": {  "MY_VARIABLE": "production_value" }
   "vars": {
     "TELEGRAM_BOT_USERNAME": "WallBreakerNO4_Timer_bot",
-    "OPENROUTER_MODEL": "deepseek/deepseek-v4-flash"
+    "OPENROUTER_MODEL": "deepseek/deepseek-v4-flash-0731"
   }
   /**
 	 * Static Assets
